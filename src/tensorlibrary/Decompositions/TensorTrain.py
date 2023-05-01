@@ -7,7 +7,6 @@ import tensornetwork as tn
 import tensorly as tl
 from tensorlibrary.linalg import truncated_svd
 
-# from numba import njit
 import numpy as np
 from tensornetwork.backend_contextmanager import get_default_backend
 
@@ -46,11 +45,11 @@ class TensorTrain:
             )
             self.norm_index = len(corelist)
 
-        self.cores_to_nodes(corelist)
+        self.__cores_to_nodes(corelist)
         self.ndims = len(self.cores)
-        self.ranks = self.get_ranks()
+        self.ranks = self.__get_ranks()
         self.errs = errs
-        self.shape = self.get_shape()
+        self.shape = self.__get_shape()
 
     # ================== Operators ========================
     def __add__(self, other):
@@ -91,6 +90,31 @@ class TensorTrain:
     def __truediv__(self, other: Union[int, float]):
         return self * (1/other)
 
+    def __rtruediv__(self, other):
+        return self / other
+
+    def __matmul__(self, other):
+        if isinstance(other, TensorTrain):
+            return self.dot(other)
+
+    # def __rmatmul__(self, other):
+    #     TODO: implement outerproduct
+
+    # =============== Private Methods ===============
+    def __get_ranks(self):
+        return tl.tensor([self.cores[k].shape[2] for k in range(0, len(self.cores)-1)])
+
+    def __get_shape(self):
+        return tuple([core.shape[1] for core in self.cores])
+
+    def __cores_to_nodes(self, corelist):
+        self.cores = [tn.Node(core, f"core_{i}") for i, core in enumerate(corelist)]
+        self.connections = [
+            self.cores[k].edges[2] ^ self.cores[k + 1].edges[0]
+            for k in range(-1, len(corelist) - 1)
+        ]
+        return self
+
     # ============ Methods ====================
     def copy(self):
         cores = [core.tensor for core in self.cores]
@@ -113,28 +137,30 @@ class TensorTrain:
     def rank(self):
         return self.ranks
 
-    def get_ranks(self):
-        return tl.tensor([self.cores[k].shape[2] for k in range(0, len(self.cores)-1)])
-
-    def cores_to_nodes(self, corelist):
-        self.cores = [tn.Node(core, f"core_{i}") for i, core in enumerate(corelist)]
-        self.connections = [
-            self.cores[k].edges[2] ^ self.cores[k + 1].edges[0]
-            for k in range(-1, len(corelist) - 1)
-        ]
-        return self
-
-    def get_shape(self):
-        return tl.tensor([core.shape[1] for core in self.cores])
-
     def dot(self, other):
-        assert self.shape == other.shape
+        # assert tl.all(self.shape == other.shape)
         if isinstance(other, TensorTrain):
             net1 = tn.replicate_nodes(self.cores)
             net2 = tn.replicate_nodes(other.cores)
 
-            connect = [a.edges[1] ^ b.edges[1] for a, b in zip(net1, net2)]
-            return tn.contractors.auto(net1+net2)
+            for a, b in zip(net1, net2):
+                a.edges[1] ^ b.edges[1]
+
+            node = tn.contractors.auto(net1+net2)
+            return node.tensor
+        elif tl.is_tensor(other):
+            net1 = tn.replicate_nodes(self.cores)
+
+            if len(other.shape) == 1:   # vector
+                other = tl.reshape(other, tuple(self.shape))
+
+            net2 = tn.Node(other)
+
+            for k, core in enumerate(net1):
+                core.edges[1] ^ net2.edges[k]
+
+            node = tn.contractors.auto(net1 + [net2])
+            return node.tensor
 
 
 def tt_svd(

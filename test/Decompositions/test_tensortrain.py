@@ -9,6 +9,7 @@ from tensorly.testing import (
     assert_array_almost_equal,
     assert_raises,
 )
+import pytest
 
 
 def test_init_contract():
@@ -77,6 +78,20 @@ def test_div():
     tt2b = tt2.contract(to_array=True)
     assert np.isclose(tl.norm(tt2b), tl.norm(tens+tens))
     assert_array_almost_equal(tt2b, tens+tens)
+
+
+def test_dot():
+    tens = np.random.rand(10, 30, 10, 15, 16, 3)
+    tt = TensorTrain(tens)
+    assert np.isclose(tt.dot(tt), tl.norm(tens)**2)
+    assert np.isclose(tt.dot(tens), tl.norm(tens)**2)
+    assert np.isclose(tt.dot(tl.reshape(tens, tens.size)),  tl.norm(tens)**2)
+    with pytest.raises(ValueError):
+        tens = np.random.rand(10,20,30,10)
+        tt.dot(tens)
+
+
+
 
 
 
