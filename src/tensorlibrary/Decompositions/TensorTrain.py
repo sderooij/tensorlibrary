@@ -28,10 +28,6 @@ class TensorTrain:
         backend="numpy",
     ):
         """Initialize a TensorTrain.
-        Args:
-          backend: The name of the linalg that should be used to perform
-            contractions. Available backends are currently 'numpy', 'tensorflow',
-            'pytorch', 'jax'
         """
 
         if backend is None:
