@@ -43,7 +43,7 @@ class TensorTrain:
                 max_trunc_error=max_trunc_error,
                 relative=relative,
             )
-            self.norm_index = len(corelist)
+            self.norm_index = len(corelist)-1
 
         self.__cores_to_nodes(corelist)
         self.ndims = len(self.cores)
@@ -161,6 +161,26 @@ class TensorTrain:
 
             node = tn.contractors.auto(net1 + [net2])
             return node.tensor
+
+    def norm(self):
+        if self.norm_index is None:
+            return tl.sqrt(self.dot(self))
+        else:
+            return tl.norm(self.cores[self.norm_index].tensor)
+
+    # def orthogonalize(self, n=None, inplace=True):
+    # TODO: implement n-orthogonlization
+    #
+    #     if n is None:
+    #         n = self.ndims-1
+    #     ranks = self.ranks
+    #     ra
+    #     sz = self.shape
+    #     newranks = ranks
+    #     for k in range(0, n):
+    #         leftcore = tl.reshape(self.cores[k].tensor, (ranks[k]*sz[k], ranks[k+1]))
+    #         q, r = tl.qr(leftcore, mode='reduced')
+    #         newrank[k]
 
 
 def tt_svd(

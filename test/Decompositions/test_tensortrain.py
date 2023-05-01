@@ -91,6 +91,14 @@ def test_dot():
         tt.dot(tens)
 
 
+def test_norm():
+    tens = np.random.rand(10, 30, 10, 15, 16, 3)
+    tt = TensorTrain(tens)
+    assert np.isclose(tt.norm(), tl.norm(tens))
+    assert np.isclose(tt.copy().norm(), tl.norm(tens))
+
+
+
 
 
 
