@@ -96,6 +96,19 @@ def test_norm():
     tt = TensorTrain(tens)
     assert np.isclose(tt.norm(), tl.norm(tens))
     assert np.isclose(tt.copy().norm(), tl.norm(tens))
+    
+def test_orthogonalize():
+    tens = np.random.rand(10, 30, 10, 15, 16, 3)
+    tt = TensorTrain(tens)
+    tt_ortho = tt.orthogonalize(3)
+    assert np.isclose(tt_ortho.norm(), tl.norm(tens))
+    assert np.isclose(tl.norm(tt_ortho.cores[3].tensor), tl.norm(tens))
+    assert np.isclose(tt.dot(tt), tt_ortho.norm()**2)
+    # assert np.isclose(tl.norm(tt_ortho.cores[1].tensor),1)
+    tback_ortho = tt_ortho.contract(to_array=True)
+    assert_array_almost_equal(tback_ortho, tens)
+
+
 
 
 
