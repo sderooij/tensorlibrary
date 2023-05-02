@@ -1,1 +1,1 @@
-from .linalg import truncated_svd
+from .linalg import *

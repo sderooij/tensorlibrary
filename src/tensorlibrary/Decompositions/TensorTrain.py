@@ -5,7 +5,7 @@
 from typing import Any, List, Optional, Text, Type, Union, Dict, Sequence
 import tensornetwork as tn
 import tensorly as tl
-from tensorlibrary.linalg import truncated_svd
+from tensorlibrary.linalg import tt_svd
 
 import numpy as np
 from tensornetwork.backend_contextmanager import get_default_backend
@@ -25,6 +25,7 @@ class TensorTrain:
         svd_method="tt_svd",
         relative: Optional[bool] = False,
         backend="numpy",
+        norm_index=None,
     ):
         """Initialize a TensorTrain.
         """
@@ -35,7 +36,7 @@ class TensorTrain:
         if cores is not None and tensor is None:
             corelist = cores
             errs = None
-            self.norm_index = None
+            self.norm_index = norm_index
         else:
             corelist, ranks, errs = tt_svd(
                 tensor,
@@ -168,68 +169,54 @@ class TensorTrain:
         else:
             return tl.norm(self.cores[self.norm_index].tensor)
 
-    # def orthogonalize(self, n=None, inplace=True):
-    # TODO: implement n-orthogonlization
-    #
-    #     if n is None:
-    #         n = self.ndims-1
-    #     ranks = self.ranks
-    #     ra
-    #     sz = self.shape
-    #     newranks = ranks
-    #     for k in range(0, n):
-    #         leftcore = tl.reshape(self.cores[k].tensor, (ranks[k]*sz[k], ranks[k+1]))
-    #         q, r = tl.qr(leftcore, mode='reduced')
-    #         newrank[k]
+    def orthogonalize(self, n=None, inplace=True):
+        #TODO: implement n-orthogonlization
+
+        assert n < self.ndims
+        if n is None:
+            n = self.ndims-1
+
+        ranks = tl.concatenate([[1], self.ranks, [1]], axis=0)
+        N = self.shape
+        d = self.ndims
+        # newranks = ranks
+        cores = [core.tensor for core in self.cores]
+        # newcores = []
+        # left orthogonalization
+        for k in range(n):
+            # left unfolding core
+            A_L = cores[k].reshape((ranks[k] * N[k], ranks[k + 1]))
+            # perform QR decomposition
+            Q, R = tl.qr(A_L)
+            # save old rank
+            oldRank = ranks[k + 1]
+            # calculate new rank
+            ranks[k + 1] = Q.shape[1]
+            # Replace cores
+            cores[k] = Q.reshape((ranks[k], N[k], ranks[k + 1]))
+            # 1-mode product
+            core = cores[k + 1].reshape((oldRank, N[k + 1] * ranks[k + 2]))
+            core = np.dot(R, core)
+            cores[k + 1] = core.reshape((R.shape[1], N[k + 1], ranks[k + 2]))
+
+        # right orthogonalization
+        for k in reversed(range(n + 1, d)):
+            # right unfolding core
+            A_R = cores[k].reshape((ranks[k], N[k] * ranks[k + 1]))
+            # QR
+            Q, R = tl.qr(A_R.T)
+            # contract core k-1 with R'
+            core = cores[k - 1].reshape((N[k - 1] * ranks[k - 1], ranks[k]))
+            core = np.dot(core, R.T)
+            # calculate new rank
+            ranks[k] = Q.shape[1]
+            # Replace cores
+            cores[k] = Q.T.reshape((ranks[k], N[k], ranks[k + 1]))
+            cores[k - 1] = core.reshape((ranks[k - 1], N[k - 1], ranks[k]))
+
+        return TensorTrain(cores=cores, norm_index=n)
 
 
-def tt_svd(
-    tensor,
-    max_ranks: Optional[int] = np.inf,
-    max_trunc_error: Optional[float] = 0.0,
-    relative: Optional[bool] = False,
-):
-    corelist = []
-    errs = []
-    ranks = []
-    d = len(tensor.shape)
-    if not relative:
-        max_trunc_error = (
-            max_trunc_error * tl.norm(tensor) * (1 / tl.sqrt(d - 1))
-        )
 
-    if not hasattr(max_ranks, "__len__"):
-        max_ranks = max_ranks * tl.ones(d - 1)
-    if not hasattr(max_trunc_error, "__len__"):
-        max_trunc_error = max_trunc_error * tl.ones(d - 1)
 
-    sz = tensor.shape
-    # first core
-    tensor = tl.reshape(tensor, (sz[0], tl.prod(sz[1:])))
-    u, s, vh, err = truncated_svd(
-        tensor,
-        max_rank=max_ranks[0],
-        max_trunc_error=max_trunc_error[0],
-        relative=relative,
-    )
-    corelist.append(tl.reshape(u, (1, u.shape[0], u.shape[1])))
-    tensor = np.diag(s) @ vh
-    errs.append(err)
-    ranks.append(u.shape[1])
 
-    for i in range(1, d - 1):
-        tensor = tl.reshape(tensor, (sz[i] * ranks[i - 1], np.prod(sz[i + 1 :])))
-        u, s, vh, err = truncated_svd(
-            tensor,
-            max_rank=max_ranks[i],
-            max_trunc_error=max_trunc_error[i],
-            relative=relative,
-        )
-        corelist.append(tl.reshape(u, (ranks[i - 1], sz[i], u.shape[1])))
-        tensor = np.diag(s) @ vh
-        errs.append(err)
-        ranks.append(u.shape[1])
-
-    corelist.append(tl.reshape(tensor, (tensor.shape[0], tensor.shape[1], 1)))
-
-    return corelist, ranks, tl.norm(errs)
