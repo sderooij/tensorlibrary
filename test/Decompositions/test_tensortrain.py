@@ -43,8 +43,8 @@ def test_add():
     tt = TensorTrain(tens)
     tt2 = tt + tt
     tt2b = tt2.contract(to_array=True)
-    assert np.isclose(tl.norm(tt2b), tl.norm(tens+tens))
-    assert_array_almost_equal(tt2b, tens+tens)
+    assert np.isclose(tl.norm(tt2b), tl.norm(tens + tens))
+    assert_array_almost_equal(tt2b, tens + tens)
 
 
 def test_sub():
@@ -52,10 +52,10 @@ def test_sub():
 
     # ------ first case =======
     tt = TensorTrain(tens)
-    tt2 = 3*tt - tt
+    tt2 = 3 * tt - tt
     tt2b = tt2.contract(to_array=True)
-    assert np.isclose(tl.norm(tt2b), tl.norm(tens+tens))
-    assert_array_almost_equal(tt2b, tens+tens)
+    assert np.isclose(tl.norm(tt2b), tl.norm(tens + tens))
+    assert_array_almost_equal(tt2b, tens + tens)
 
 
 def test_mul():
@@ -63,10 +63,10 @@ def test_mul():
 
     # ------ first case =======
     tt = TensorTrain(tens)
-    tt2 = tt * 2.
+    tt2 = tt * 2.0
     tt2b = tt2.contract(to_array=True)
-    assert np.isclose(tl.norm(tt2b), tl.norm(tens+tens))
-    assert_array_almost_equal(tt2b, tens+tens)
+    assert np.isclose(tl.norm(tt2b), tl.norm(tens + tens))
+    assert_array_almost_equal(tt2b, tens + tens)
 
 
 def test_div():
@@ -76,18 +76,18 @@ def test_div():
     tt = TensorTrain(tens)
     tt2 = tt / 0.5
     tt2b = tt2.contract(to_array=True)
-    assert np.isclose(tl.norm(tt2b), tl.norm(tens+tens))
-    assert_array_almost_equal(tt2b, tens+tens)
+    assert np.isclose(tl.norm(tt2b), tl.norm(tens + tens))
+    assert_array_almost_equal(tt2b, tens + tens)
 
 
 def test_dot():
     tens = np.random.rand(10, 30, 10, 15, 16, 3)
     tt = TensorTrain(tens)
-    assert np.isclose(tt.dot(tt), tl.norm(tens)**2)
-    assert np.isclose(tt.dot(tens), tl.norm(tens)**2)
-    assert np.isclose(tt.dot(tl.reshape(tens, tens.size)),  tl.norm(tens)**2)
+    assert np.isclose(tt.dot(tt), tl.norm(tens) ** 2)
+    assert np.isclose(tt.dot(tens), tl.norm(tens) ** 2)
+    assert np.isclose(tt.dot(tl.reshape(tens, tens.size)), tl.norm(tens) ** 2)
     with pytest.raises(ValueError):
-        tens = np.random.rand(10,20,30,10)
+        tens = np.random.rand(10, 20, 30, 10)
         tt.dot(tens)
 
 
@@ -96,27 +96,15 @@ def test_norm():
     tt = TensorTrain(tens)
     assert np.isclose(tt.norm(), tl.norm(tens))
     assert np.isclose(tt.copy().norm(), tl.norm(tens))
-    
+
+
 def test_orthogonalize():
     tens = np.random.rand(10, 30, 10, 15, 16, 3)
     tt = TensorTrain(tens)
     tt_ortho = tt.orthogonalize(3)
     assert np.isclose(tt_ortho.norm(), tl.norm(tens))
     assert np.isclose(tl.norm(tt_ortho.cores[3].tensor), tl.norm(tens))
-    assert np.isclose(tt.dot(tt), tt_ortho.norm()**2)
+    assert np.isclose(tt.dot(tt), tt_ortho.norm() ** 2)
     # assert np.isclose(tl.norm(tt_ortho.cores[1].tensor),1)
     tback_ortho = tt_ortho.contract(to_array=True)
     assert_array_almost_equal(tback_ortho, tens)
-
-
-
-
-
-
-
-
-
-
-
-
-

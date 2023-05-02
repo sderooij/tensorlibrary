@@ -27,8 +27,7 @@ class TensorTrain:
         backend="numpy",
         norm_index=None,
     ):
-        """Initialize a TensorTrain.
-        """
+        """Initialize a TensorTrain."""
 
         if backend is None:
             backend = get_default_backend()
@@ -44,7 +43,7 @@ class TensorTrain:
                 max_trunc_error=max_trunc_error,
                 relative=relative,
             )
-            self.norm_index = len(corelist)-1
+            self.norm_index = len(corelist) - 1
 
         self.__cores_to_nodes(corelist)
         self.ndims = len(self.cores)
@@ -54,34 +53,38 @@ class TensorTrain:
 
     # ================== Operators ========================
     def __add__(self, other):
-
         if isinstance(other, TensorTrain):
             assert tl.all(self.shape == other.shape), "TTs must be of same shape."
 
             new_rank = self.ranks + other.ranks
             new_cores = [tl.zeros((1, self.shape[0], new_rank[0]))]
-            new_cores[0][0, :, :self.ranks[0]] = self.cores[0].tensor
-            new_cores[0][0, :, self.ranks[0]:] = other.cores[0].tensor
+            new_cores[0][0, :, : self.ranks[0]] = self.cores[0].tensor
+            new_cores[0][0, :, self.ranks[0] :] = other.cores[0].tensor
 
-            for k in range(1, self.ndims-1):
-                new_cores.append(tl.zeros((new_rank[k-1], self.shape[k], new_rank[k])))
-                new_cores[k][:self.ranks[k-1], :, :self.ranks[k]] = self.cores[k].tensor
-                new_cores[k][self.ranks[k-1]:, :, self.ranks[k]:] = other.cores[k].tensor
+            for k in range(1, self.ndims - 1):
+                new_cores.append(
+                    tl.zeros((new_rank[k - 1], self.shape[k], new_rank[k]))
+                )
+                new_cores[k][: self.ranks[k - 1], :, : self.ranks[k]] = self.cores[
+                    k
+                ].tensor
+                new_cores[k][self.ranks[k - 1] :, :, self.ranks[k] :] = other.cores[
+                    k
+                ].tensor
 
             new_cores.append(tl.zeros((new_rank[-1], self.shape[-1], 1)))
-            new_cores[-1][:self.ranks[-1], :] = self.cores[-1].tensor
-            new_cores[-1][self.ranks[-1]:, :] = other.cores[-1].tensor
+            new_cores[-1][: self.ranks[-1], :] = self.cores[-1].tensor
+            new_cores[-1][self.ranks[-1] :, :] = other.cores[-1].tensor
 
             return TensorTrain(cores=new_cores)
         else:
             raise Exception("Addition not defined for objects of this type.")
 
     def __sub__(self, other):
-        return self + ((-1.)*other)
+        return self + ((-1.0) * other)
 
     def __mul__(self, other: Union[int, float]):
-
-        new_cores = [self.cores[k].tensor for k in range(0, self.ndims-1)]
+        new_cores = [self.cores[k].tensor for k in range(0, self.ndims - 1)]
         new_cores.append(self.cores[-1].tensor * other)
         return TensorTrain(cores=new_cores)
 
@@ -89,7 +92,7 @@ class TensorTrain:
         return self * other
 
     def __truediv__(self, other: Union[int, float]):
-        return self * (1/other)
+        return self * (1 / other)
 
     def __rtruediv__(self, other):
         return self / other
@@ -103,7 +106,9 @@ class TensorTrain:
 
     # =============== Private Methods ===============
     def __get_ranks(self):
-        return tl.tensor([self.cores[k].shape[2] for k in range(0, len(self.cores)-1)])
+        return tl.tensor(
+            [self.cores[k].shape[2] for k in range(0, len(self.cores) - 1)]
+        )
 
     def __get_shape(self):
         return tuple([core.shape[1] for core in self.cores])
@@ -147,12 +152,12 @@ class TensorTrain:
             for a, b in zip(net1, net2):
                 a.edges[1] ^ b.edges[1]
 
-            node = tn.contractors.auto(net1+net2)
+            node = tn.contractors.auto(net1 + net2)
             return node.tensor
         elif tl.is_tensor(other):
             net1 = tn.replicate_nodes(self.cores)
 
-            if len(other.shape) == 1:   # vector
+            if len(other.shape) == 1:  # vector
                 other = tl.reshape(other, tuple(self.shape))
 
             net2 = tn.Node(other)
@@ -170,11 +175,11 @@ class TensorTrain:
             return tl.norm(self.cores[self.norm_index].tensor)
 
     def orthogonalize(self, n=None, inplace=True):
-        #TODO: implement n-orthogonlization
+        # TODO: implement n-orthogonlization
 
         assert n < self.ndims
         if n is None:
-            n = self.ndims-1
+            n = self.ndims - 1
 
         ranks = tl.concatenate([[1], self.ranks, [1]], axis=0)
         N = self.shape
@@ -215,8 +220,3 @@ class TensorTrain:
             cores[k - 1] = core.reshape((ranks[k - 1], N[k - 1], ranks[k]))
 
         return TensorTrain(cores=cores, norm_index=n)
-
-
-
-
-
