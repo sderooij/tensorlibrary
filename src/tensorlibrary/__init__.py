@@ -1,1 +1,1 @@
-from .Decompositions.TensorTrain import TensorTrain
+from .Decompositions.TensorTrain import TensorTrain, QTT

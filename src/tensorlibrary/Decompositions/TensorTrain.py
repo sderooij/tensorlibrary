@@ -6,7 +6,7 @@ from typing import Any, List, Optional, Text, Type, Union, Dict, Sequence
 import tensornetwork as tn
 import tensorly as tl
 from tensorlibrary.linalg import tt_svd
-
+from primefac import primefac
 import numpy as np
 from tensornetwork.backend_contextmanager import get_default_backend
 
@@ -134,9 +134,9 @@ class TensorTrain:
 
         output_edge_order = [core.edges[1] for core in network]
         if to_array:
-            return tn.contractors.auto(
+            return tl.tensor(tn.contractors.auto(
                 network, output_edge_order=output_edge_order
-            ).tensor
+            ).tensor)
         else:
             return tn.contractors.auto(network, output_edge_order=output_edge_order)
 
@@ -175,8 +175,6 @@ class TensorTrain:
             return tl.norm(self.cores[self.norm_index].tensor)
 
     def orthogonalize(self, n=None, inplace=True):
-        # TODO: implement n-orthogonlization
-
         assert n < self.ndims
         if n is None:
             n = self.ndims - 1
@@ -184,39 +182,61 @@ class TensorTrain:
         ranks = tl.concatenate([[1], self.ranks, [1]], axis=0)
         N = self.shape
         d = self.ndims
-        # newranks = ranks
         cores = [core.tensor for core in self.cores]
-        # newcores = []
+
         # left orthogonalization
         for k in range(n):
             # left unfolding core
             A_L = cores[k].reshape((ranks[k] * N[k], ranks[k + 1]))
             # perform QR decomposition
             Q, R = tl.qr(A_L)
-            # save old rank
-            oldRank = ranks[k + 1]
             # calculate new rank
             ranks[k + 1] = Q.shape[1]
             # Replace cores
             cores[k] = Q.reshape((ranks[k], N[k], ranks[k + 1]))
             # 1-mode product
-            core = cores[k + 1].reshape((oldRank, N[k + 1] * ranks[k + 2]))
-            core = np.dot(R, core)
-            cores[k + 1] = core.reshape((R.shape[1], N[k + 1], ranks[k + 2]))
-
+            cores[k + 1] = tl.tenalg.mode_dot(cores[k + 1], R, 0, transpose=True)
         # right orthogonalization
         for k in reversed(range(n + 1, d)):
             # right unfolding core
-            A_R = cores[k].reshape((ranks[k], N[k] * ranks[k + 1]))
+            A_R = tl.reshape(cores[k], (ranks[k], N[k] * ranks[k + 1]))
             # QR
             Q, R = tl.qr(A_R.T)
             # contract core k-1 with R'
-            core = cores[k - 1].reshape((N[k - 1] * ranks[k - 1], ranks[k]))
-            core = np.dot(core, R.T)
+            cores[k - 1] = tl.tenalg.mode_dot(cores[k-1], R, 2)
             # calculate new rank
             ranks[k] = Q.shape[1]
             # Replace cores
             cores[k] = Q.T.reshape((ranks[k], N[k], ranks[k + 1]))
-            cores[k - 1] = core.reshape((ranks[k - 1], N[k - 1], ranks[k]))
 
         return TensorTrain(cores=cores, norm_index=n)
+
+    def tkron(self, tens):
+        # TODO: implement tensor kronecker product
+        return self
+
+
+def QTT(vec,
+        q=None,
+        max_ranks: Optional[int] = np.infty,
+        max_trunc_error: Optional[float] = 0.0,
+        svd_method="tt_svd",
+        relative: Optional[bool] = False,
+        backend="numpy",
+    ):
+    if q is None:
+        q_gen = primefac(len(vec))
+        q = [fac for fac in q_gen]
+    # assert tl.prod(q) == len(vec)
+    tensor = tl.reshape(vec, tuple(q))
+    return TensorTrain(
+        tensor=tensor,
+        max_ranks=max_ranks,
+        max_trunc_error=max_trunc_error,
+        svd_method=svd_method,
+        relative=relative,
+        backend=backend,
+    )
+
+    # def contract(self, to_array=True, inplace=False):
+    #     return tl.reshape(super().contract(to_array=to_array, inplace=inplace), tl.prod(self.shape))
