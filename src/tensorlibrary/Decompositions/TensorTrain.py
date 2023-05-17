@@ -8,7 +8,7 @@ import tensorly as tl
 from tensorlibrary.linalg import tt_svd
 from primefac import primefac
 import numpy as np
-from tensornetwork.backend_contextmanager import get_default_backend
+# from tensornetwork.backend_contextmanager import get_default_backend
 
 
 class TensorTrain:
@@ -24,13 +24,13 @@ class TensorTrain:
         max_trunc_error: Optional[float] = 0.0,
         svd_method="tt_svd",
         relative: Optional[bool] = False,
-        backend="numpy",
+        backend=None,
         norm_index=None,
     ):
         """Initialize a TensorTrain."""
 
         if backend is None:
-            backend = get_default_backend()
+            backend = tl.get_backend()
 
         if cores is not None and tensor is None:
             corelist = cores
@@ -105,15 +105,15 @@ class TensorTrain:
     #     TODO: implement outerproduct
 
     # =============== Private Methods ===============
-    def __get_ranks(self):
+    def __get_ranks(self) -> list:
         return tl.tensor(
-            [self.cores[k].shape[2] for k in range(0, len(self.cores) - 1)]
+            [self.cores[k].shape[3] for k in range(0, len(self.cores) - 1)]
         )
 
     def __get_shape(self):
         return tuple([core.shape[1] for core in self.cores])
 
-    def __cores_to_nodes(self, corelist):
+    def __cores_to_nodes(self, corelist: list):
         self.cores = [tn.Node(core, f"core_{i}") for i, core in enumerate(corelist)]
         self.connections = [
             self.cores[k].edges[2] ^ self.cores[k + 1].edges[0]
@@ -167,6 +167,8 @@ class TensorTrain:
 
             node = tn.contractors.auto(net1 + [net2])
             return node.tensor
+        else:
+            raise Exception(TypeError, "dot method not defined for this type")
 
     def norm(self):
         if self.norm_index is None:
@@ -210,6 +212,10 @@ class TensorTrain:
             cores[k] = Q.T.reshape((ranks[k], N[k], ranks[k + 1]))
 
         return TensorTrain(cores=cores, norm_index=n)
+
+    def outer(self, tens):
+        if isinstance(tens, "TensorTrain"):
+            return
 
     def tkron(self, tens):
         # TODO: implement tensor kronecker product
