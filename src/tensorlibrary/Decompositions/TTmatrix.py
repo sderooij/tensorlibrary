@@ -96,7 +96,7 @@ class TTmatrix:
     # =============== Private Methods ===============
     def __get_ranks(self) -> list:
         return tl.tensor(
-            [self.cores[k].shape[2] for k in range(0, len(self.cores) - 1)]
+            [self.cores[k].shape[3] for k in range(0, len(self.cores) - 1)]
         )
 
     def __get_shape(self):
