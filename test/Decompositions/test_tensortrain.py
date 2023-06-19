@@ -1,4 +1,5 @@
 from tensorlibrary import TensorTrain
+from tensorlibrary.random import tt_random
 import numpy as np
 import tensorly as tl
 from tensorly.testing import (
@@ -108,3 +109,10 @@ def test_orthogonalize():
     # assert np.isclose(tl.norm(tt_ortho.cores[1].tensor),1)
     tback_ortho = tt_ortho.contract(to_array=True)
     assert_array_almost_equal(tback_ortho, tens)
+
+
+def test_tt_random():
+    shape = [10, 30, 10, 15, 16, 3]
+    ranks = [10, 20, 10, 5, 20]
+    tt = tt_random(shape, ranks)
+    assert np.isclose(tt.norm(), tt.dot(tt))

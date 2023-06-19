@@ -8,7 +8,6 @@ import tensorly as tl
 from tensorlibrary.linalg import tt_svd
 from primefac import primefac
 import numpy as np
-# from tensornetwork.backend_contextmanager import get_default_backend
 
 
 class TensorTrain:
@@ -53,6 +52,17 @@ class TensorTrain:
 
     # ================== Operators ========================
     def __add__(self, other):
+        """Add two tensor-trains
+
+        Args:
+            other (TensorTrain): tensor-train to add
+
+        Raises:
+            Exception: if other is not a Tensor-Train
+
+        Returns:
+            TensorTrain: A_TT + B_TT
+        """
         if isinstance(other, TensorTrain):
             assert tl.all(self.shape == other.shape), "TTs must be of same shape."
 
@@ -127,6 +137,15 @@ class TensorTrain:
         return TensorTrain(cores=cores)
 
     def contract(self, to_array=False, inplace=False):
+        """contract the tensor-train to the full tensor
+
+        Args:
+            to_array (bool, optional): to array instead of tensornetwork. Defaults to False.
+            inplace (bool, optional): contract the network inplace. Defaults to False.
+
+        Returns:
+            tn.network or array_like: full tensor
+        """
         if inplace:
             network = self.cores
         else:
@@ -144,6 +163,17 @@ class TensorTrain:
         return self.ranks
 
     def dot(self, other):
+        """tensor dot product
+
+        Args:
+            other (TensorTrain or Tensor): tensor to contract with
+
+        Raises:
+            Exception: if other is not Tensor or TensorTrain object
+
+        Returns:
+            value: result of dot product
+        """
         # assert tl.all(self.shape == other.shape)
         if isinstance(other, TensorTrain):
             net1 = tn.replicate_nodes(self.cores)
@@ -177,6 +207,15 @@ class TensorTrain:
             return tl.norm(self.cores[self.norm_index].tensor)
 
     def orthogonalize(self, n=None, inplace=True):
+        """orthogonalize the tensor-train 
+
+        Args:
+            n (int, optional): location of the norm of the tensor-train. Defaults to None.
+            inplace (bool, optional): in place processing. Defaults to True.
+
+        Returns:
+            TensorTrain: n-orthogonal tensor-train
+        """
         assert n < self.ndims
         if n is None:
             n = self.ndims - 1
