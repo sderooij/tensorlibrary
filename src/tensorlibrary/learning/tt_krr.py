@@ -73,7 +73,7 @@ def tt_krr_sweep(
     sweep = list(range(d - 1, 0, -1)) + list(range(0, d - 2))
 
     for n_sweep in sweep:
-        for k in range(0, len(weights.cores)):
+        for k_core in range(0, len(weights.cores)):
             g = []
             for x_row, y_row, n in enumerate(zip(x, y)):
                 # feature map
@@ -81,12 +81,13 @@ def tt_krr_sweep(
                     x_row, m, kernel_type=kernel_type, kernel_param=kernel_param
                 )  # D x m
                 # contract features with weights
-                g.append(tl.tensor_to_vec(get_g(weights, z_x, k).tensor))
+                g.append(tl.tensor_to_vec(get_g(weights, z_x, k_core).tensor))
 
             g = tl.stack(g, axis=1)     # RRm x N
             gg = g @ g.T
             gy = g @ y.T
             new_weight = tl.solve(gg, gy)
+            weights.update_core(k_core, tl.reshape(new_weight, weights.cores[k_core].shape))
 
 
     return weights
