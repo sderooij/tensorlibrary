@@ -15,17 +15,17 @@ import numpy as np
 
 class TTmatrix:
     def __init__(
-            self,
-            matrix=None,
-            q_row=None,
-            q_col=None,
-            cores=None,
-            max_ranks: Optional[int] = np.infty,
-            max_trunc_error: Optional[float] = 0.0,
-            svd_method="tt_svd",
-            relative: Optional[bool] = False,
-            backend=None,
-            norm_index=None,
+        self,
+        matrix=None,
+        q_row=None,
+        q_col=None,
+        cores=None,
+        max_ranks: Optional[int] = np.infty,
+        max_trunc_error: Optional[float] = 0.0,
+        svd_method="tt_svd",
+        relative: Optional[bool] = False,
+        backend=None,
+        norm_index=None,
     ):
         if backend is None:
             backend = tl.get_backend()
@@ -39,13 +39,13 @@ class TTmatrix:
             sz = matrix.shape
             if q_row is not None:
                 assert tl.prod(q_row) == sz[0]
-                assert isinstance(q_row, 'list')
+                assert isinstance(q_row, "list")
             else:
                 q_gen = primefac(sz[0])
                 q_row = [fac for fac in q_gen]
             if q_col is not None:
                 assert tl.prod(q_col) == sz[1]
-                assert isinstance(q_col, 'list')
+                assert isinstance(q_col, "list")
             else:
                 q_gen = primefac(sz[1])
                 q_col = [fac for fac in q_gen]
@@ -121,9 +121,11 @@ class TTmatrix:
         col_edges = [core.edges[2] for core in network]
         output_edge_order = row_edges + col_edges
         if to_array:
-            tensor = tl.tensor(tn.contractors.auto(
-                network, output_edge_order=output_edge_order
-            ).tensor)
-            return tl.reshape(tensor, (tl.prod(self.row_shape), tl.prod(self.col_shape)))
+            tensor = tl.tensor(
+                tn.contractors.auto(network, output_edge_order=output_edge_order).tensor
+            )
+            return tl.reshape(
+                tensor, (tl.prod(self.row_shape), tl.prod(self.col_shape))
+            )
         else:
             return tn.contractors.auto(network, output_edge_order=output_edge_order)

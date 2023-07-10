@@ -116,3 +116,31 @@ def test_tt_random():
     ranks = [10, 20, 10, 5, 20]
     tt = tt_random(shape, ranks)
     assert np.isclose(tt.norm(), tt.dot(tt))
+
+
+def test_update_core():
+    tens = np.random.rand(10, 30, 10, 15, 16, 3)
+
+    tt = TensorTrain(tens)
+    new_core = tl.zeros_like(tt.cores[1].tensor)
+    tt.update_core(1, new_core)
+    assert np.isclose(tl.norm(tt.cores[1].tensor), 0)
+    assert np.isclose(tt.norm(), 0)
+
+    tens = np.random.rand(10, 30, 10)
+
+    tt2 = TensorTrain(tens)
+    new_core = tl.zeros_like(tt2.cores[2].tensor)
+    tt2.update_core(2, new_core)
+    assert np.isclose(tl.norm(tt2.cores[2].tensor), 0)
+    assert np.isclose(tt2.norm(), 0)
+
+    tens = np.random.rand(10, 30, 10)
+
+    tt3 = TensorTrain(tens)
+    new_core = tl.zeros_like(tt3.cores[0].tensor)
+    tt3.update_core(0, new_core)
+    assert np.isclose(tl.norm(tt3.cores[0].tensor), 0)
+    assert np.isclose(tt3.norm(), 0)
+
+

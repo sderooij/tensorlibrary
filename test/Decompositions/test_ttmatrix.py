@@ -13,15 +13,13 @@ import pytest
 
 
 def test_init():
-    mat = np.random.rand(16,20)
+    mat = np.random.rand(16, 20)
 
     # -- first case -------
     tt = TTmatrix(mat, max_ranks=10)
     assert tl.all(tt.ranks <= 10)
     # ------- second case -----
-    tt = TTmatrix(mat, max_trunc_error=0.)
+    tt = TTmatrix(mat, max_trunc_error=0.0)
     tback = tt.contract()
     assert_allclose(mat, tback)
-    assert_allclose(tt.errs, 0.)
-
-
+    assert_allclose(tt.errs, 0.0)

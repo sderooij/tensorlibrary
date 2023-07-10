@@ -19,13 +19,13 @@ def tt_random(shape: Optional[int], ranks: Optional[int]):
     """
     cores = list()
     d = len(shape)
-    ranks.insert(0,1)
+    ranks.insert(0, 1)
     ranks.append(1)
 
     for k in range(0, d):
-        core1 = random_tensor((ranks[k]*shape[k], ranks[k+1]))
-        core1, _ = tl.qr(core1, mode='reduced')
-        ranks[k+1] = core1.shape[1]
-        cores.append(tl.reshape(core1,(ranks[k], shape[k], ranks[k+1])))
+        core1 = random_tensor((ranks[k] * shape[k], ranks[k + 1]))
+        core1, _ = tl.qr(core1, mode="reduced")
+        ranks[k + 1] = core1.shape[1]
+        cores.append(tl.reshape(core1, (ranks[k], shape[k], ranks[k + 1])))
 
-    return TensorTrain(cores=cores, norm_index=d-1)
+    return TensorTrain(cores=cores, norm_index=d - 1)

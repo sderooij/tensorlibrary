@@ -13,7 +13,7 @@ import pytest
 
 
 def test_init_contract():
-    tens = np.random.rand(10*30*10*15*16)
+    tens = np.random.rand(10 * 30 * 10 * 15 * 16)
 
     # -- first case -------
     tt = QTT(tens, max_ranks=100)
@@ -37,7 +37,7 @@ def test_init_contract():
 
 
 def test_add():
-    tens = np.random.rand(10*30*10*15*16)
+    tens = np.random.rand(10 * 30 * 10 * 15 * 16)
 
     # ------ first case =======
     tt = QTT(tens)
@@ -48,7 +48,7 @@ def test_add():
 
 
 def test_sub():
-    tens = np.random.rand(10*28*10*15*16)
+    tens = np.random.rand(10 * 28 * 10 * 15 * 16)
 
     # ------ first case =======
     tt = QTT(tens)
@@ -59,7 +59,7 @@ def test_sub():
 
 
 def test_mul():
-    tens = np.random.rand(10*30*10*15*16)
+    tens = np.random.rand(10 * 30 * 10 * 15 * 16)
 
     # ------ first case =======
     tt = QTT(tens)
@@ -70,7 +70,7 @@ def test_mul():
 
 
 def test_div():
-    tens = np.random.rand(10*30*10*15*16)
+    tens = np.random.rand(10 * 30 * 10 * 15 * 16)
 
     # ------ first case =======
     tt = QTT(tens)
@@ -78,6 +78,7 @@ def test_div():
     tt2b = tl.tensor_to_vec(tt2.contract(to_array=True))
     assert np.isclose(tl.norm(tt2b), tl.norm(tens + tens))
     assert_array_almost_equal(tt2b, tens + tens)
+
 
 #
 # def test_dot():

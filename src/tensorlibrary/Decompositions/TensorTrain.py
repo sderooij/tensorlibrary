@@ -136,6 +136,33 @@ class TensorTrain:
         cores = [core.tensor for core in self.cores]
         return TensorTrain(cores=cores)
 
+    def update_core(self, core_index, new_core):
+        assert self.cores[core_index].tensor.shape == new_core.shape
+        new_core = tn.Node(new_core, name=f"core_{core_index}")
+        self.connections[core_index] = tn.disconnect(self.connections[core_index])
+        self.connections[core_index] = self.cores[core_index - 1].edges[2] ^ new_core.edges[0]
+        if core_index != self.ndims-1:
+            # self.connections[core_index].update_axis(0, self.cores[core_index], 0, new_core)
+            # self.connections[core_index+1].update_axis(2, self.cores[core_index], 2, new_core)
+
+            self.connections[core_index+1] = tn.disconnect(self.connections[core_index+1])
+            self.connections[core_index+1] = new_core.edges[2] ^ self.cores[core_index + 1].edges[0]
+            self.cores[core_index] = new_core
+
+        elif core_index == self.ndims-1:
+
+            self.connections[0] = tn.disconnect(self.connections[0])
+            # self.connections[0].update_axis(2, self.cores[core_index], 2, new_core)
+            # self.connections[core_index].update_axis(0, self.cores[core_index], 0, new_core)
+            self.connections[0] = new_core.edges[2] ^ self.cores[0].edges[0]
+            self.cores[core_index] = new_core
+        else:
+            raise Exception(IndexError, "Core index out of bounds")
+
+        self.norm_index = None
+
+        return self
+
     def contract(self, to_array=False, inplace=False):
         """contract the tensor-train to the full tensor
 
@@ -153,9 +180,9 @@ class TensorTrain:
 
         output_edge_order = [core.edges[1] for core in network]
         if to_array:
-            return tl.tensor(tn.contractors.auto(
-                network, output_edge_order=output_edge_order
-            ).tensor)
+            return tl.tensor(
+                tn.contractors.auto(network, output_edge_order=output_edge_order).tensor
+            )
         else:
             return tn.contractors.auto(network, output_edge_order=output_edge_order)
 
@@ -207,7 +234,7 @@ class TensorTrain:
             return tl.norm(self.cores[self.norm_index].tensor)
 
     def orthogonalize(self, n=None, inplace=True):
-        """orthogonalize the tensor-train 
+        """orthogonalize the tensor-train
 
         Args:
             n (int, optional): location of the norm of the tensor-train. Defaults to None.
@@ -244,7 +271,7 @@ class TensorTrain:
             # QR
             Q, R = tl.qr(A_R.T)
             # contract core k-1 with R'
-            cores[k - 1] = tl.tenalg.mode_dot(cores[k-1], R, 2)
+            cores[k - 1] = tl.tenalg.mode_dot(cores[k - 1], R, 2)
             # calculate new rank
             ranks[k] = Q.shape[1]
             # Replace cores
@@ -261,14 +288,15 @@ class TensorTrain:
         return self
 
 
-def QTT(vec,
-        q=None,
-        max_ranks: Optional[int] = np.infty,
-        max_trunc_error: Optional[float] = 0.0,
-        svd_method="tt_svd",
-        relative: Optional[bool] = False,
-        backend="numpy",
-    ):
+def QTT(
+    vec,
+    q=None,
+    max_ranks: Optional[int] = np.infty,
+    max_trunc_error: Optional[float] = 0.0,
+    svd_method="tt_svd",
+    relative: Optional[bool] = False,
+    backend="numpy",
+):
     if q is None:
         q_gen = primefac(len(vec))
         q = [fac for fac in q_gen]
