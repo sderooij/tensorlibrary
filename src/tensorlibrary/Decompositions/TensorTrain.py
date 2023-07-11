@@ -111,6 +111,9 @@ class TensorTrain:
         if isinstance(other, TensorTrain):
             return self.dot(other)
 
+    def __len__(self):
+        return self.ndims
+
     # def __rmatmul__(self, other):
     #     TODO: implement outerproduct
 
@@ -142,18 +145,12 @@ class TensorTrain:
         self.connections[core_index] = tn.disconnect(self.connections[core_index])
         self.connections[core_index] = self.cores[core_index - 1].edges[2] ^ new_core.edges[0]
         if core_index != self.ndims-1:
-            # self.connections[core_index].update_axis(0, self.cores[core_index], 0, new_core)
-            # self.connections[core_index+1].update_axis(2, self.cores[core_index], 2, new_core)
-
             self.connections[core_index+1] = tn.disconnect(self.connections[core_index+1])
             self.connections[core_index+1] = new_core.edges[2] ^ self.cores[core_index + 1].edges[0]
             self.cores[core_index] = new_core
 
         elif core_index == self.ndims-1:
-
             self.connections[0] = tn.disconnect(self.connections[0])
-            # self.connections[0].update_axis(2, self.cores[core_index], 2, new_core)
-            # self.connections[core_index].update_axis(0, self.cores[core_index], 0, new_core)
             self.connections[0] = new_core.edges[2] ^ self.cores[0].edges[0]
             self.cores[core_index] = new_core
         else:
@@ -233,12 +230,12 @@ class TensorTrain:
         else:
             return tl.norm(self.cores[self.norm_index].tensor)
 
-    def orthogonalize(self, n=None, inplace=True):
+    def orthogonalize(self, n=None, inplace=False):
         """orthogonalize the tensor-train
 
         Args:
             n (int, optional): location of the norm of the tensor-train. Defaults to None.
-            inplace (bool, optional): in place processing. Defaults to True.
+            inplace (bool, optional): in place processing. Defaults to False.
 
         Returns:
             TensorTrain: n-orthogonal tensor-train
@@ -278,6 +275,80 @@ class TensorTrain:
             cores[k] = Q.T.reshape((ranks[k], N[k], ranks[k + 1]))
 
         return TensorTrain(cores=cores, norm_index=n)
+
+    def shiftnorm(self, new_index: int, inplace=True):
+        """shift the norm of the tensor-traing to a new location
+
+        Args:
+            new_index (int): new location of the norm
+            inplace (bool, optional): in place processing. Defaults to True.
+
+        Returns:
+            TensorTrain: tensor-train with shifted norm
+        """
+        if self.norm_index is None:
+            return self.orthogonalize(n=new_index, inplace=inplace)
+
+        if new_index == self.norm_index:
+            return self
+
+        d = self.ndims
+        ranks = tl.concatenate([[1], self.ranks, [1]], axis=0)
+        if inplace:
+            if new_index > self.norm_index:
+                for k in range(self.norm_index, new_index):
+                    # left unfolding core
+                    A_L = self.cores[k].tensor.reshape((ranks[k] * self.shape[k], ranks[k + 1]))
+                    # perform QR decomposition
+                    Q, R = tl.qr(A_L, mode="reduced")
+                    # calculate new rank
+                    ranks[k + 1] = Q.shape[1]
+                    # Replace cores
+                    self.update_core(k, Q.reshape((ranks[k], self.shape[k], ranks[k + 1])))
+                    # 1-mode product
+                    self.update_core(k+1, tl.tenalg.mode_dot(self.cores[k + 1].tensor, R, 0, transpose=True))
+            elif new_index < self.norm_index:
+                for k in reversed(range(new_index+1, self.norm_index+1)):
+                    # right unfolding core
+                    A_R = tl.reshape(self.cores[k].tensor, (ranks[k], self.shape[k] * ranks[k + 1]))
+                    # QR
+                    Q, R = tl.qr(A_R.T, mode="reduced")
+                    # contract core k-1 with R'
+                    self.update_core(k-1, tl.tenalg.mode_dot(self.cores[k - 1].tensor, R, 2))
+                    # calculate new rank
+                    ranks[k] = Q.shape[1]
+                    # Replace cores
+                    self.update_core(k, Q.T.reshape((ranks[k], self.shape[k], ranks[k + 1])))
+            self.norm_index = new_index
+            return self
+        else:
+            cores = [core.tensor for core in self.cores]
+            # ranks = tl.concatenate([[1], self.ranks, [1]], axis=0)
+            if new_index > self.norm_index:
+                for k in range(self.norm_index, new_index):
+                    # left unfolding core
+                    A_L = cores[k].reshape((ranks[k] * self.shape[k], ranks[k + 1]))
+                    # perform QR decomposition
+                    Q, R = tl.qr(A_L, mode="reduced")
+                    # calculate new rank
+                    ranks[k + 1] = Q.shape[1]
+                    # Replace cores
+                    cores[k] = Q.reshape((ranks[k], self.shape[k], ranks[k + 1]))
+                    # 1-mode product
+                    cores[k + 1] = tl.tenalg.mode_dot(cores[k + 1], R, 0, transpose=True)
+            elif new_index < self.norm_index:
+                for k in reversed(range(new_index, self.norm_index)):
+                    # right unfolding core
+                    A_R = tl.reshape(cores[k], (ranks[k], self.shape[k] * ranks[k + 1]))
+                    # QR
+                    Q, R = tl.qr(A_R.T, mode="reduced")
+                    # contract core k-1 with R'
+                    cores[k - 1] = tl.tenalg.mode_dot(cores[k - 1], R, 2)
+                    # calculate new rank
+                    ranks[k] = Q.shape[1]
+                    # Replace cores
+                    cores[k] = Q.T.reshape((ranks[k], self.shape[k], ranks[k + 1]))
+            return TensorTrain(cores=cores, norm_index=new_index)
 
     def outer(self, tens):
         if isinstance(tens, "TensorTrain"):
