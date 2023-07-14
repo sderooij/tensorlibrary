@@ -143,13 +143,19 @@ class TensorTrain:
         assert self.cores[core_index].tensor.shape == new_core.shape
         new_core = tn.Node(new_core, name=f"core_{core_index}")
         self.connections[core_index] = tn.disconnect(self.connections[core_index])
-        self.connections[core_index] = self.cores[core_index - 1].edges[2] ^ new_core.edges[0]
-        if core_index != self.ndims-1:
-            self.connections[core_index+1] = tn.disconnect(self.connections[core_index+1])
-            self.connections[core_index+1] = new_core.edges[2] ^ self.cores[core_index + 1].edges[0]
+        self.connections[core_index] = (
+            self.cores[core_index - 1].edges[2] ^ new_core.edges[0]
+        )
+        if core_index != self.ndims - 1:
+            self.connections[core_index + 1] = tn.disconnect(
+                self.connections[core_index + 1]
+            )
+            self.connections[core_index + 1] = (
+                new_core.edges[2] ^ self.cores[core_index + 1].edges[0]
+            )
             self.cores[core_index] = new_core
 
-        elif core_index == self.ndims-1:
+        elif core_index == self.ndims - 1:
             self.connections[0] = tn.disconnect(self.connections[0])
             self.connections[0] = new_core.edges[2] ^ self.cores[0].edges[0]
             self.cores[core_index] = new_core
@@ -298,27 +304,42 @@ class TensorTrain:
             if new_index > self.norm_index:
                 for k in range(self.norm_index, new_index):
                     # left unfolding core
-                    A_L = self.cores[k].tensor.reshape((ranks[k] * self.shape[k], ranks[k + 1]))
+                    A_L = self.cores[k].tensor.reshape(
+                        (ranks[k] * self.shape[k], ranks[k + 1])
+                    )
                     # perform QR decomposition
                     Q, R = tl.qr(A_L, mode="reduced")
                     # calculate new rank
                     ranks[k + 1] = Q.shape[1]
                     # Replace cores
-                    self.update_core(k, Q.reshape((ranks[k], self.shape[k], ranks[k + 1])))
+                    self.update_core(
+                        k, Q.reshape((ranks[k], self.shape[k], ranks[k + 1]))
+                    )
                     # 1-mode product
-                    self.update_core(k+1, tl.tenalg.mode_dot(self.cores[k + 1].tensor, R, 0, transpose=True))
+                    self.update_core(
+                        k + 1,
+                        tl.tenalg.mode_dot(
+                            self.cores[k + 1].tensor, R, 0, transpose=True
+                        ),
+                    )
             elif new_index < self.norm_index:
-                for k in reversed(range(new_index+1, self.norm_index+1)):
+                for k in reversed(range(new_index + 1, self.norm_index + 1)):
                     # right unfolding core
-                    A_R = tl.reshape(self.cores[k].tensor, (ranks[k], self.shape[k] * ranks[k + 1]))
+                    A_R = tl.reshape(
+                        self.cores[k].tensor, (ranks[k], self.shape[k] * ranks[k + 1])
+                    )
                     # QR
                     Q, R = tl.qr(A_R.T, mode="reduced")
                     # contract core k-1 with R'
-                    self.update_core(k-1, tl.tenalg.mode_dot(self.cores[k - 1].tensor, R, 2))
+                    self.update_core(
+                        k - 1, tl.tenalg.mode_dot(self.cores[k - 1].tensor, R, 2)
+                    )
                     # calculate new rank
                     ranks[k] = Q.shape[1]
                     # Replace cores
-                    self.update_core(k, Q.T.reshape((ranks[k], self.shape[k], ranks[k + 1])))
+                    self.update_core(
+                        k, Q.T.reshape((ranks[k], self.shape[k], ranks[k + 1]))
+                    )
             self.norm_index = new_index
             return self
         else:
@@ -335,7 +356,9 @@ class TensorTrain:
                     # Replace cores
                     cores[k] = Q.reshape((ranks[k], self.shape[k], ranks[k + 1]))
                     # 1-mode product
-                    cores[k + 1] = tl.tenalg.mode_dot(cores[k + 1], R, 0, transpose=True)
+                    cores[k + 1] = tl.tenalg.mode_dot(
+                        cores[k + 1], R, 0, transpose=True
+                    )
             elif new_index < self.norm_index:
                 for k in reversed(range(new_index, self.norm_index)):
                     # right unfolding core

@@ -1,1 +1,1 @@
-from .linalg import *
+from .linalg import tt_svd, dot_kron, truncated_svd, multi_dot_kron

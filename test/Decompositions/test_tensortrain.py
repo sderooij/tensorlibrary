@@ -142,5 +142,3 @@ def test_update_core():
     tt3.update_core(0, new_core)
     assert np.isclose(tl.norm(tt3.cores[0].tensor), 0)
     assert np.isclose(tt3.norm(), 0)
-
-

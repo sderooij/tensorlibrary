@@ -17,14 +17,14 @@ def tt_random(shape: Optional[int], ranks: Optional[int]):
     Returns:
         TensorTrain: the random tensor-train
     """
-    #TODO : add option to generate a random tensor-train with a given norm and norm_index
+    # TODO : add option to generate a random tensor-train with a given norm and norm_index
     cores = list()
     d = len(shape)
     assert len(ranks) == d - 1, "ranks must be of length d-1"
     # if norm_index is None:
     #     norm_index = d - 1
-
     ranks = ranks.copy()
+    ranks = list(ranks)
     ranks.insert(0, 1)
     ranks.append(1)
     ranks = [int(r) for r in ranks]
@@ -36,4 +36,4 @@ def tt_random(shape: Optional[int], ranks: Optional[int]):
         ranks[k + 1] = core1.shape[1]
         cores.append(tl.reshape(core1, (ranks[k], shape[k], ranks[k + 1])))
 
-    return TensorTrain(cores=cores, norm_index=d-1)
+    return TensorTrain(cores=cores, norm_index=d - 1)

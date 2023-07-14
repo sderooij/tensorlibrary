@@ -84,3 +84,28 @@ def tt_svd(
     corelist.append(tl.reshape(tensor, (tensor.shape[0], tensor.shape[1], 1)))
 
     return corelist, ranks, tl.norm(errs)
+
+
+def dot_kron(mat1, mat2):
+    """
+    Computes the row-wise right kronecker product of two matrices.
+    Args:
+        mat1: first matrix (N x M)
+        mat2: second matrix (N x P)
+
+    Returns:
+        matrix of size N x (M*P)
+    """
+    return tl.tenalg.khatri_rao([mat2.T, mat1.T]).T
+
+
+def multi_dot_kron(matlist):
+    """
+    Computes the row-wise right kronecker product of a list of matrices.
+    Args:
+        matlist: list of matrices
+
+    Returns:
+        matrix of size N x (M1*M2*...*MP)
+    """
+    return tl.tenalg.khatri_rao([mat.T for mat in matlist]).T
