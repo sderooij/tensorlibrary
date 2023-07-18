@@ -1,14 +1,16 @@
+#TODO check that the reshapes are correct (C row major instead of column major)
 import numpy as np
 
 from ..Decompositions.TensorTrain import TensorTrain
 from ..random import tt_random
 from ..linalg import dot_kron, multi_dot_kron
+from .t_krr import features
 import tensorly as tl
 import tensornetwork as tn
 import itertools
 
 
-def tt_krr(x, y, m, ranks, reg_par, num_sweeps, kernel_type="rbf", kernel_param=1.0):
+def tt_krr(x, y, m, ranks, reg_par, num_sweeps, feature_map="rbf", map_param=1.0):
     """
     Apply the TT-KRR agorithm (Tensor-Train Kernel Ridge Regression).
 
@@ -18,7 +20,7 @@ def tt_krr(x, y, m, ranks, reg_par, num_sweeps, kernel_type="rbf", kernel_param=
         m: number of basis functions / order of polynomials
         ranks: TT-ranks
         reg_par:
-        kernel_param: lengthscale for rbf-kernel
+        map_param: lengthscale for rbf-kernel
         num_sweeps: number of ALS sweeps
 
     Returns:
@@ -38,15 +40,15 @@ def tt_krr(x, y, m, ranks, reg_par, num_sweeps, kernel_type="rbf", kernel_param=
         m,
         reg_par,
         num_sweeps,
-        kernel_type=kernel_type,
-        kernel_param=kernel_param,
+        feature_map=feature_map,
+        map_param=map_param,
     )
 
     return weights
 
 
 def tt_krr_als(
-    weights, x, y, m, reg_par, num_sweeps, kernel_type="rbf", kernel_param=1.0
+    weights, x, y, m, reg_par, num_sweeps, feature_map="rbf", map_param=1.0
 ):
     for ite in range(0, num_sweeps):  # forward and backward sweep
         weights = tt_krr_sweep(
@@ -55,15 +57,15 @@ def tt_krr_als(
             y,
             m,
             reg_par,
-            kernel_type=kernel_type,
-            kernel_param=kernel_param,
+            feature_map=feature_map,
+            map_param=map_param,
         )
 
     return weights
 
 
 def tt_krr_sweep(
-    weights, x, y, m: int, reg_par: float, kernel_param: float = 1.0, kernel_type="rbf"
+    weights, x, y, m: int, reg_par: float, map_param: float = 1.0, feature_map="rbf"
 ):
     """
     One sweep of the TT-KRR algorithm.  Forward and backward sweep.
@@ -73,8 +75,8 @@ def tt_krr_sweep(
         y: labels (1 x N)
         m: basis functions / order of polynomials
         reg_par: regularization parameter
-        kernel_param: kernel parameter (lengthscale for rbf-kernel)
-        kernel_type: rbf, poly or chebishev
+        map_param: kernel parameter (lengthscale for rbf-kernel)
+        feature_map: rbf, poly or chebishev
 
     Returns:
         weights: updated weights
@@ -88,8 +90,8 @@ def tt_krr_sweep(
         weights.orthogonalize(d - 1, inplace=True)
 
     sweep = list(range(d - 1, 0, -1)) + list(range(0, d - 1))
-    z_0 = features(x[:, 0], m, kernel_type=kernel_type, kernel_param=kernel_param)
-    z_d = features(x[:, d - 1], m, kernel_type=kernel_type, kernel_param=kernel_param)
+    z_0 = features(x[:, 0], m, feature_map=feature_map, map_param=map_param)
+    z_d = features(x[:, d - 1], m, feature_map=feature_map, map_param=map_param)
     g_left = [tl.ones((N, 1)), update_g(weights.cores[0].tensor, z_0, mode="first")]
     g_right = [None for iter in range(0, d - 2)]
     g_right.append(update_g(weights.cores[d - 1].tensor, z_d, mode="last"))
@@ -97,7 +99,7 @@ def tt_krr_sweep(
 
     for iter in range(1, d - 1):
         z_k = features(
-            x[:, iter], m, kernel_type=kernel_type, kernel_param=kernel_param
+            x[:, iter], m, feature_map=feature_map, map_param=map_param
         )
         g_left.append(
             update_g(weights.cores[iter].tensor, z_k, g_left[iter], mode="left")
@@ -111,14 +113,14 @@ def tt_krr_sweep(
         # for x_row in x:  # rewrite to make parallel
         #     # feature map
         #     z_x = features(
-        #         x_row, m, kernel_type=kernel_type, kernel_param=kernel_param
+        #         x_row, m, feature_map=feature_map, map_param=map_param
         #     )  # D x m
         #     # contract features with weights
         #     g.append(tl.tensor_to_vec(get_g(weights, z_x, k_core).tensor))
         #
         # g = tl.stack(g, axis=1)  # RRm x N
         z_k = features(
-            x[:, k_core], m, kernel_type=kernel_type, kernel_param=kernel_param
+            x[:, k_core], m, feature_map=feature_map, map_param=map_param
         )
         g = dot_kron(dot_kron(g_left[k_core], z_k), g_right[k_core])  # N x RRm
         gg = g.T @ g
@@ -156,46 +158,6 @@ def tt_krr_sweep(
         prev_core = k_core
 
     return weights
-
-
-def features(x_d, m: int, kernel_type="rbf", *, kernel_param=1.0):
-    """
-    Feature mapping.
-    Args:
-        x_d: d-th feature N x 1 array (N=datapoints, 1=feature dimension)
-        m: number of basis functions or order of polynomial
-        kernel_type: kernel type rbf (via deterministic fourier), poly or chebishev
-        kernel_param: parameters of the kernel function. lengthscale for rbf
-
-    Returns:
-        z_x : mapped features (D x m)
-    """
-    if kernel_type == "rbf":
-        x_d = (x_d + 1 / 2) / 2
-        w = np.arange(1, m + 1)
-        s = (
-            np.sqrt(2 * np.pi)
-            * kernel_param
-            * np.exp(-((np.pi * w / 2) ** 2) * kernel_param**2 / 2)
-        )
-        z_x = np.sin(np.pi * x_d[:, np.newaxis] * w) * np.sqrt(s)
-    elif kernel_type == "poly":
-        # polynomial feature map
-        z_x = np.zeros((x_d.shape[0], m))
-        # in vectorized form
-        for i in range(0, m):
-            z_x[:, i] = x_d**i
-
-    elif kernel_type == "chebishev":
-        # chebishev feature map
-        z_x = np.zeros((x_d.shape[0], m))
-        # in vectorized form
-        for i in range(0, m):
-            z_x[:, i] = np.cos(i * np.arccos(2 * x_d[:, 0] - 1))
-    else:
-        raise NotImplementedError
-
-    return z_x
 
 
 def update_g(weight_k, z_k, g_prev=None, mode="right"):
@@ -265,7 +227,7 @@ def get_g(weights, z_x, k_d):
 
 
 def tt_krr_predict(
-    weights, new_sample, m: int, reg_par, kernel_type="rbf", *, kernel_param=1.0
+    weights, new_sample, m: int, reg_par, feature_map="rbf", *, map_param=1.0
 ):
     """
     Predict the label of a new sample. The new sample is mapped to the feature space and then contracted with the TT weights.
@@ -274,8 +236,8 @@ def tt_krr_predict(
         new_sample: new datapoint to be classified
         m: number of basis functions or order of polynomial
         reg_par: regularization parameter
-        kernel_type: kernel type, rbf (via deterministic fourier), poly or chebishev
-        kernel_param: kernel parameter, lengthscale for rbf
+        feature_map: kernel type, rbf (via deterministic fourier), poly or chebishev
+        map_param: kernel parameter, lengthscale for rbf
 
     Returns:
         labels: predicted labels
@@ -284,22 +246,22 @@ def tt_krr_predict(
     [N_test, D] = new_sample.shape
     if N_test == 1:
         m = weights.cores[0].shape[1]
-        z = features(new_sample, m, kernel_type=kernel_type, kernel_param=kernel_param)
+        z = features(new_sample, m, feature_map=feature_map, map_param=map_param)
         z = [tl.reshape(z[k], (1, m, 1)) for k in range(len(z))]
         ztt = TensorTrain(cores=z)
         out = weights.dot(ztt) + reg_par * weights.norm() ** 2
         labels = np.sign(out)
     elif N_test < 1e5:
-        # Z = multi_dot_kron([features(new_sample[:, k], m, kernel_type=kernel_type, kernel_param=kernel_param)
+        # Z = multi_dot_kron([features(new_sample[:, k], m, feature_map=feature_map, map_param=map_param)
         #                     for k in range(0, D)])
         wz = tl.ones((N_test, 1))
         z_k = features(
-            new_sample[:, 0], m, kernel_type=kernel_type, kernel_param=kernel_param
+            new_sample[:, 0], m, feature_map=feature_map, map_param=map_param
         )
         wz = update_g(weights.cores[0].tensor, z_k, mode="first")
         for k in range(1, D):
             z_k = features(
-                new_sample[:, k], m, kernel_type=kernel_type, kernel_param=kernel_param
+                new_sample[:, k], m, feature_map=feature_map, map_param=map_param
             )
             wz = update_g(weights.cores[k].tensor, z_k, g_prev=wz, mode="left")
         wz = tl.tensor_to_vec(wz)
