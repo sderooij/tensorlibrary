@@ -4,37 +4,50 @@
 import tensorly as tl
 from typing import Any, List, Optional, Text, Type, Union, Dict, Sequence
 import numpy as np
-# from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.base import BaseEstimator, ClassifierMixin
+
 # from sklearn.utils import check_X_y, check_array
 # from sklearn.utils.validation import check_is_fitted
+from sklearn.utils._param_validation import Interval, StrOptions
+from sklearn.utils.validation import (
+    check_random_state,
+    check_is_fitted,
+    check_array,
+    check_X_y,
+)
+from numbers import Real
 from sklearn.metrics import accuracy_score
+
 # from tensorly import tensor
 
 
-from .cp_krr import get_system_cp_krr
+from ._cp_krr import get_system_cp_krr
+from .tt_krr import get_tt_rank, update_wz_tt, initialize_wz
+from .features import features
+from ..random import tt_random
+from ..linalg import dot_kron
+from abc import ABC, abstractmethod, ABCMeta
 
-from abc import ABC, abstractmethod
 
-
-class BaseTKRR(ABC):
+class BaseTKRR(BaseEstimator, metaclass=ABCMeta):
     """Abstract class for Tensor Kernel Ridge Regression. Format compatible with scikit-learn.
 
     Args:
         ABC (ABC): Abstract Base Class
     """
 
+    @abstractmethod
     def __init__(
         self,
         M: int = 1,
         w_init=None,
-        feature_map="det_fourier",
+        feature_map="rbf",
         reg_par=1e-5,
         num_sweeps=2,
         map_param=1.0,
-        max_rank=None,
+        max_rank=1,
         random_state=None,
         class_weight=None,
-        **kwargs,
     ):
         self.M = M
         self.w_init = w_init
@@ -45,12 +58,6 @@ class BaseTKRR(ABC):
         self.max_rank = max_rank
         self.random_state = random_state
         self.class_weight = class_weight
-        self.w = w_init
-        # self._init(**kwargs)
-
-    # @abstractmethod
-    # def _init(self, **kwargs):
-    #     pass
 
     @abstractmethod
     def fit(self, x: tl.tensor, y: tl.tensor, **kwargs):
@@ -60,75 +67,180 @@ class BaseTKRR(ABC):
     def predict(self, x: tl.tensor, **kwargs):
         pass
 
-    @abstractmethod
-    def score(self, **kwarg):
-        pass
 
-    @abstractmethod
-    def get_params(self, **kwargs):
-        pass
-
-    @abstractmethod
-    def set_params(self, **kwargs):
-        pass
-
-
-class TTKRR(BaseTKRR):
+class TTKRR(BaseTKRR, ClassifierMixin):
     """Tensor Train Kernel Ridge Regression
 
     Args:
         BaseTKRR (BaseTKRR): Abstract Base Class
     """
+    def __init__(
+        self,
+        M: int = 5,
+        w_init=None,
+        feature_map="rbf",
+        reg_par=1e-5,
+        num_sweeps=15,
+        map_param=0.1,
+        max_rank=5,
+        random_state=None,
+        class_weight="balanced",
+    ):
+        super().__init__(
+            M=M,
+            w_init=w_init,
+            feature_map=feature_map,
+            reg_par=reg_par,
+            num_sweeps=num_sweeps,
+            map_param=map_param,
+            max_rank=max_rank,
+            random_state=random_state,
+            class_weight=class_weight,
+        )
 
     def fit(self, x: tl.tensor, y: tl.tensor, **kwargs):
+        self.classes_ = tl.tensor([-1, 1])  # TODO based on y
+
+        rnd = check_random_state(self.random_state)
+        # check that x and y have correct shape
+        x, y = check_X_y(x, y, y_numeric=True, multi_output=False)
+        N, D = x.shape
+        shape_weights = self.M * tl.ones(D)  # m^D
+
+        if isinstance(self.max_rank, int):
+            ranks = get_tt_rank(shape_weights, self.max_rank)
+        elif isinstance(self.max_rank, list):
+            ranks = self.max_rank
+        else:
+            raise TypeError("Unsupported max_rank type")
+
+        # Initialize weights
+        if self.w_init is None:
+            w = tt_random(
+                shape_weights, ranks, random_state=self.random_state, cores_only=True
+            )
+            # TODO: check if this is correct
+
+        elif isinstance(self.w_init, list):
+            w = self.w_init
+            ranks = [w[i].shape[0] for i in range(len(w))] + [1]
+            assert tl.all(tl.tensor([w[i].shape[1] for i in range(len(w))]) == self.M), "w_init does not match M"
+        else:
+            raise TypeError("Unsupported w_int type")
+
+        # Initialize feature map
+        # TODO: test the shit out of it
+        WZ_left, WZ_right = initialize_wz(w, x, self.M, self.feature_map, self.map_param, 0)
+        sweep = list(range(0, D-1)) + list(range(D-1, 0, -1))
+        ltr = True  # left to right sweep
+        for ite in range(self.num_sweeps):
+            for d in sweep:
+                z_d = features(x[:, d], m=self.M, feature_map=self.feature_map, map_param=self.map_param)
+                # construct linear subsystem matrix
+
+                WZ = dot_kron(
+                    WZ_left[d],
+                    dot_kron(z_d, WZ_right[d])
+                )
+                # Solve the sytem
+                # TODO: check with pinv
+                CC = tl.dot(WZ.T, WZ)
+                CC += self.reg_par * tl.eye(CC.shape[0])
+                yy = tl.dot(WZ.T, y)
+                new_weight = tl.solve(CC, yy)
+
+                # orthogonalize
+                if ltr:
+                    new_weight = new_weight.reshape(
+                        (tl.prod([self.M, ranks[d]], dtype=int), ranks[d+1]),
+                        order='F'
+                    )
+                    Q, R = tl.qr(new_weight, 'reduced')
+                    # shift norm to next core
+                    w[d] = Q.reshape(
+                        (ranks[d], self.M, ranks[d + 1]),
+                        order='F'
+                    )
+                    w[d+1] = tl.tenalg.mode_dot(w[d+1], R, 0)
+                    # update WZ left
+                    WZ_left[d+1] = update_wz_tt(w[d], z_d, WZ_left[d], mode="left")
+                else:
+                    new_weight = new_weight.reshape(
+                        (ranks[d], tl.prod([self.M, ranks[d + 1]], dtype=int)),
+                        order='F'
+                    )
+                    Q, R = tl.qr(new_weight.T, 'reduced')
+                    # shift norm to next core
+                    w[d] = Q.T.reshape((ranks[d], self.M, ranks[d + 1]), order='F')
+                    w[d-1] = tl.tenalg.mode_dot(w[d-1], R, 2)
+                    # update WZ right
+                    WZ_right[d-1] = update_wz_tt(w[d], z_d, WZ_right[d], mode="right")
+
+                # update ltr
+                if d == D-2:
+                    ltr = False
+                elif d == 0:
+                    ltr = True
+
         return self
 
     def predict(self, x: tl.tensor, **kwargs):
         return self
 
-    def score(self, **kwarg):
-        pass
 
-    def get_params(self, **kwargs):
-        pass
-
-    def set_params(self, **kwargs):
-        pass
-
-
-class CPKRR(BaseTKRR):
+class CPKRR(BaseTKRR, ClassifierMixin):
     """CP Kernel Ridge Regression (KRR)
 
     Args:
         BaseTKRR (BaseTKRR): Abstract Base Class
     """
 
-    def _init(
-            self,
-            M: int = 1,
-            w_init=None,
-            feature_map="det_fourier",
-            reg_par=1e-5,
-            num_sweeps=2,
-            map_param=1.0,
-            max_rank=None,
-            random_state=None,
-            class_weight=None,
-            **kwargs,
+    _parameter_contraints: Dict[str, Dict[str, Any]] = {
+        "M": [Interval(Real, 1, None, closed="left")],
+        "w_init": [Interval(Real, None, None, closed="neither")],
+        "feature_map": [
+            StrOptions({"rbf", "fourier", "poly", "chebyshev", "chebyshev2"})
+        ],
+        "reg_par": [Interval(Real, 0, None, closed="left")],
+        "num_sweeps": [Interval(Real, 1, None, closed="left")],
+        "map_param": [Interval(Real, 0, None, closed="neither")],
+        "max_rank": [Interval(Real, 1, None, closed="left")],
+        "random_state": ["random_state"],
+        "class_weight": [StrOptions({"balanced"}), dict, None],
+    }
+
+    def __init__(
+        self,
+        M: int = 5,
+        w_init=None,
+        feature_map="rbf",
+        reg_par=1e-5,
+        num_sweeps=15,
+        map_param=0.1,
+        max_rank=5,
+        random_state=None,
+        class_weight="balanced",
     ):
-        self.M = M
-        self.w_init = w_init
-        self.feature_map = feature_map
-        self.reg_par = reg_par
-        self.num_sweeps = num_sweeps
-        self.map_param = map_param
-        self.max_rank = max_rank
-        self.random_state = random_state
-        self.class_weight = class_weight
-        self.w = w_init
-        #TODO: add validation of parameters
+        super().__init__(
+            M=M,
+            w_init=w_init,
+            feature_map=feature_map,
+            reg_par=reg_par,
+            num_sweeps=num_sweeps,
+            map_param=map_param,
+            max_rank=max_rank,
+            random_state=random_state,
+            class_weight=class_weight,
+        )
+
+        # self.weights_ = w_init
 
     def fit(self, x: tl.tensor, y: tl.tensor, **kwargs):
+        self.classes_ = tl.tensor([-1, 1])  # TODO based on y
+
+        rnd = check_random_state(self.random_state)
+        # check that x and y have correct shape
+        x, y = check_X_y(x, y, y_numeric=True, multi_output=False)
         N, D = x.shape
         # initialize factors
         if self.w_init is None:
@@ -138,14 +250,15 @@ class CPKRR(BaseTKRR):
                 full=False,
                 orthogonal=False,
                 random_state=self.random_state,
-                normalise_factors=True)
+                normalise_factors=True,
+            )
             w = temp.factors
-            # w = []
+            # weights_ = []
             # for d in range(D):
             #     w_d = np.random.randn(self.M, self.max_rank, random_state=self.random_state)
             #     loadings = tl.norm(w_d, order=2, axis=0)
             #     w_d = w_d / loadings
-            #     w.append(w_d)
+            #     weights_.append(w_d)
         elif isinstance(self.w_init, list):
             w = self.w_init
         else:
@@ -154,96 +267,51 @@ class CPKRR(BaseTKRR):
         # initialize mapped features
         reg = 1
         G = 1
-        for d in range(D-1, -1, -1):   #D-1:-1:0
+        for d in range(D - 1, -1, -1):  # D-1:-1:0
             w_d = w[d]
-            reg *= (w_d.T @ w_d)
+            reg *= w_d.T @ w_d
             z_x = features(x[:, d], self.M, self.feature_map, map_param=self.map_param)
             G = (z_x @ w_d) * G
 
         # ALS sweeps
         itemax = self.num_sweeps * 2
         for it in range(itemax):
-            for d in range(0,D):
-                z_x = features(x[:, d], self.M, self.feature_map, map_param=self.map_param)
+            for d in range(0, D):
+                z_x = features(
+                    x[:, d], self.M, self.feature_map, map_param=self.map_param
+                )
 
-                reg /= (w[d].T @ w[d])  # remove current factor
-                G /= (z_x @ w[d])  # remove current factor
+                reg /= w[d].T @ w[d]  # remove current factor
+                G /= z_x @ w[d]  # remove current factor
                 CC, Cy = get_system_cp_krr(z_x, G, y)
-                w_d = tl.solve(CC + self.reg_par*N*tl.kron(reg, tl.eye(self.M)), Cy)
+                w_d = tl.solve(CC + self.reg_par * N * tl.kron(reg, tl.eye(self.M)), Cy)
                 del CC, Cy
-                w[d] = tl.reshape(w_d, (self.max_rank, self.M)).T   # to match C row-major order
-                # w = tl.cp_tensor.cp_normalize(w)
+                w[d] = tl.reshape(
+                    w_d, (self.M, self.max_rank), order="F"
+                )
+                # weights_ = tl.cp_tensor.cp_normalize(weights_)
                 loadings = tl.norm(w[d], order=2, axis=0)
                 w[d] /= loadings
-                reg *= (w[d].T @ w[d])  # add current factor
-                G *= (z_x @ w[d])  # add current factor
+                reg *= w[d].T @ w[d]  # add current factor
+                G *= z_x @ w[d]  # add current factor
 
         w[d] = w[d] * loadings
-        self.w = w
+        self.weights_ = w
         return self
 
     def decision_function(self, x: tl.tensor, **kwargs):
+        check_is_fitted(self, ["weights_"])
+        x = check_array(x)
         N, D = x.shape
         y_pred = tl.ones((N, 1))
         for d in range(0, D):
             z_x = features(x[:, d], self.M, self.feature_map, map_param=self.map_param)
-            y_pred = y_pred * (z_x @ self.w[d])
+            y_pred = y_pred * (z_x @ self.weights_[d])
         y_pred = tl.sum(y_pred, axis=1)
         return y_pred
 
     def predict(self, x: tl.tensor, **kwargs):
+        # check_is_fitted(self, ["weights_"])
         y_pred = self.decision_function(x, **kwargs)
         return tl.sign(y_pred)
 
-    def score(self, x: tl.tensor, y: tl.tensor, **kwargs):
-        y_pred = self.predict(x, **kwargs)
-        return accuracy_score(y, y_pred)
-
-    def get_params(self, **kwargs):
-        pass
-
-    def set_params(self, **kwargs):
-        pass
-
-    def get_weights(self, **kwargs):
-        return self.w
-
-
-def features(x_d, m: int, feature_map="rbf", *, map_param=1.0):
-    """
-    Feature mapping.
-    Args:
-        x_d: d-th feature N x 1 array (N=datapoints, 1=feature dimension)
-        m: number of basis functions or order of polynomial
-        feature_map: kernel type rbf (via deterministic fourier), poly or chebishev
-        map_param: parameters of the kernel function. lengthscale for rbf
-
-    Returns:
-        z_x : mapped features (D x m)
-    """
-    if feature_map == "rbf":
-        x_d = (x_d + 0.5) * 0.5
-        w = tl.arange(1, m + 1)
-        s = (
-                tl.sqrt(2 * tl.pi)
-                * map_param     # lengthscale
-                * tl.exp(-((tl.pi * w.T / 2) ** 2) * map_param ** 2 / 2)
-        )
-        z_x = tl.sin(tl.pi * tl.tenalg.outer([x_d, w])) * tl.sqrt(s)
-    elif feature_map == "poly":
-        # polynomial feature map
-        z_x = tl.zeros((x_d.shape[0], m))
-        # in vectorized form
-        for i in range(0, m):
-            z_x[:, i] = x_d ** i
-
-    elif feature_map == "chebishev":
-        # chebishev feature map
-        z_x = tl.zeros((x_d.shape[0], m))
-        # in vectorized form
-        for i in range(0, m):
-            z_x[:, i] = tl.cos(i * tl.arccos(2 * x_d - 1))
-    else:
-        raise NotImplementedError
-
-    return z_x

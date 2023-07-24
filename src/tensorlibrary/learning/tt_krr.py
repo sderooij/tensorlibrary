@@ -1,10 +1,10 @@
-#TODO check that the reshapes are correct (C row major instead of column major)
+# TODO check that the reshapes are correct (C row major instead of column major)
 import numpy as np
 
 from ..Decompositions.TensorTrain import TensorTrain
 from ..random import tt_random
 from ..linalg import dot_kron, multi_dot_kron
-from .t_krr import features
+from .features import features
 import tensorly as tl
 import tensornetwork as tn
 import itertools
@@ -47,9 +47,7 @@ def tt_krr(x, y, m, ranks, reg_par, num_sweeps, feature_map="rbf", map_param=1.0
     return weights
 
 
-def tt_krr_als(
-    weights, x, y, m, reg_par, num_sweeps, feature_map="rbf", map_param=1.0
-):
+def tt_krr_als(weights, x, y, m, reg_par, num_sweeps, feature_map="rbf", map_param=1.0):
     for ite in range(0, num_sweeps):  # forward and backward sweep
         weights = tt_krr_sweep(
             weights,
@@ -92,17 +90,15 @@ def tt_krr_sweep(
     sweep = list(range(d - 1, 0, -1)) + list(range(0, d - 1))
     z_0 = features(x[:, 0], m, feature_map=feature_map, map_param=map_param)
     z_d = features(x[:, d - 1], m, feature_map=feature_map, map_param=map_param)
-    g_left = [tl.ones((N, 1)), update_g(weights.cores[0].tensor, z_0, mode="first")]
+    g_left = [tl.ones((N, 1)), update_wz_tt(weights.cores[0].tensor, z_0, mode="first")]
     g_right = [None for iter in range(0, d - 2)]
-    g_right.append(update_g(weights.cores[d - 1].tensor, z_d, mode="last"))
+    g_right.append(update_wz_tt(weights.cores[d - 1].tensor, z_d, mode="last"))
     g_right.append(tl.ones((N, 1)))  # g_right[k] from k+1 to d-1
 
     for iter in range(1, d - 1):
-        z_k = features(
-            x[:, iter], m, feature_map=feature_map, map_param=map_param
-        )
+        z_k = features(x[:, iter], m, feature_map=feature_map, map_param=map_param)
         g_left.append(
-            update_g(weights.cores[iter].tensor, z_k, g_left[iter], mode="left")
+            update_wz_tt(weights.cores[iter].tensor, z_k, g_left[iter], mode="left")
         )
 
     prev_core = d
@@ -119,9 +115,7 @@ def tt_krr_sweep(
         #     g.append(tl.tensor_to_vec(get_g(weights, z_x, k_core).tensor))
         #
         # g = tl.stack(g, axis=1)  # RRm x N
-        z_k = features(
-            x[:, k_core], m, feature_map=feature_map, map_param=map_param
-        )
+        z_k = features(x[:, k_core], m, feature_map=feature_map, map_param=map_param)
         g = dot_kron(dot_kron(g_left[k_core], z_k), g_right[k_core])  # N x RRm
         gg = g.T @ g
         gy = g.T @ y
@@ -130,7 +124,8 @@ def tt_krr_sweep(
             gg + reg_par * N * tl.eye(gg.shape[0]), gy
         )  # (G^T G + reg_par * N * I) w_k = G^T y
         # update core
-        weights.update_core(k_core, tl.reshape(new_weight, weights.cores[k_core].shape))
+        sz = [s for s in reversed(weights.cores[k_core].shape)]
+        weights.update_core(k_core, tl.reshape(new_weight, tuple(sz)).T)
         # shift norm to next core of the sweep
         if iter < len(sweep) - 1:
             weights.shiftnorm(sweep[iter + 1], inplace=True)
@@ -139,19 +134,19 @@ def tt_krr_sweep(
 
         # update g_right / g_left
         if lft and d - 1 > k_core >= 1:
-            g_right[k_core - 1] = update_g(
+            g_right[k_core - 1] = update_wz_tt(
                 weights.cores[k_core].tensor, z_k, g_right[k_core], mode="right"
             )
         elif lft and k_core == d - 1:
-            g_right[k_core - 1] = update_g(
+            g_right[k_core - 1] = update_wz_tt(
                 weights.cores[k_core].tensor, z_k, mode="last"
             )
         elif not lft and 1 < k_core < d - 1:
-            g_left[k_core + 1] = update_g(
+            g_left[k_core + 1] = update_wz_tt(
                 weights.cores[k_core].tensor, z_k, g_left[k_core], mode="left"
             )
         elif not lft and k_core == 0:
-            g_left[k_core + 1] = update_g(
+            g_left[k_core + 1] = update_wz_tt(
                 weights.cores[k_core].tensor, z_k, mode="first"
             )
 
@@ -160,7 +155,7 @@ def tt_krr_sweep(
     return weights
 
 
-def update_g(weight_k, z_k, g_prev=None, mode="right"):
+def update_wz_tt(weight_k, z_k, g_prev=[], mode="right"):
     """
     Update the G tensor with next using the dot_kron function.
     Args:
@@ -174,14 +169,51 @@ def update_g(weight_k, z_k, g_prev=None, mode="right"):
     Returns:
         g_next: updated G tensor (N x R_k)
     """
+
     if mode == "first" or mode == "last":
         return tl.unfold(tl.tenalg.mode_dot(weight_k, z_k, mode=1), mode=1)
     elif mode == "left":
-        gz = dot_kron(g_prev, z_k)
-        return gz @ tl.unfold(weight_k, mode=2).T
+        gz = dot_kron(z_k, g_prev)  # different order than matlab
+        return gz @ tl.reshape(weight_k, (-1, weight_k.shape[2]))
     elif mode == "right":
         gz = dot_kron(g_prev, z_k)
         return gz @ tl.unfold(weight_k, mode=0).T
+
+
+def initialize_wz(weights, x, M, feature_map, map_param, k_core):
+
+    N, D = x.shape
+    wz_right = [None for iter in range(0, D)]
+    wz_left = [None for iter in range(0, D)]
+
+    if k_core == D-1:
+        wz_right[-1] = tl.ones((N, 1))
+        wz_left[0] = tl.ones((N, 1))
+        for iter, core in enumerate(weights):
+            z_x = features(x[:, iter+1], M, feature_map=feature_map, map_param=map_param)
+            if iter == 0:
+                wz_left[iter+1] = update_wz_tt(core, z_x, mode='first')
+            elif iter == D-1:
+                break
+            else:
+                wz_left[iter+1] = update_wz_tt(core, z_x, wz_left[iter], mode='left')
+
+    elif k_core == 0:
+        wz_left[0] = tl.ones((N, 1))
+        wz_right[-1] = tl.ones((N, 1))
+        # iter = D-1
+        for iter, core in enumerate(reversed(weights)):
+            if iter == D-1:
+                break
+            ii = -(iter + 2)
+            z_x = features(x[:, ii+1], M, feature_map=feature_map, map_param=map_param)
+            if ii == -2:
+                wz_right[ii] = update_wz_tt(core, z_x, mode='last')
+            else:
+                wz_right[ii] = update_wz_tt(core, z_x, wz_right[ii+1], mode='right')
+    else:
+        raise ValueError('k_core must be either 0 or D-1 for initialization.')
+    return wz_left, wz_right
 
 
 def get_g(weights, z_x, k_d):
@@ -258,13 +290,24 @@ def tt_krr_predict(
         z_k = features(
             new_sample[:, 0], m, feature_map=feature_map, map_param=map_param
         )
-        wz = update_g(weights.cores[0].tensor, z_k, mode="first")
+        wz = update_wz_tt(weights.cores[0].tensor, z_k, mode="first")
         for k in range(1, D):
             z_k = features(
                 new_sample[:, k], m, feature_map=feature_map, map_param=map_param
             )
-            wz = update_g(weights.cores[k].tensor, z_k, g_prev=wz, mode="left")
+            wz = update_wz_tt(weights.cores[k].tensor, z_k, g_prev=wz, mode="left")
         wz = tl.tensor_to_vec(wz)
         labels = np.sign(wz)
 
     return labels, wz
+
+
+def get_tt_rank(shape, max_rank):
+    out = [1]
+    for k in range(0, len(shape)-1):
+        left = tl.prod(shape[:k+1], dtype=float)
+        right = tl.prod(shape[k+1 :], dtype=float)
+        temp = tl.min([left, right, max_rank])
+        out.append(int(temp))
+    out.append(1)
+    return out

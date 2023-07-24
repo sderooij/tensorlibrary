@@ -86,7 +86,7 @@ def test_dot():
     tt = TensorTrain(tens)
     assert np.isclose(tt.dot(tt), tl.norm(tens) ** 2)
     assert np.isclose(tt.dot(tens), tl.norm(tens) ** 2)
-    assert np.isclose(tt.dot(tl.reshape(tens, tens.size)), tl.norm(tens) ** 2)
+    assert np.isclose(tt.dot(tl.reshape(tens, tens.size, order='F')), tl.norm(tens) ** 2)
     with pytest.raises(ValueError):
         tens = np.random.rand(10, 20, 30, 10)
         tt.dot(tens)
@@ -106,16 +106,27 @@ def test_orthogonalize():
     assert np.isclose(tt_ortho.norm(), tl.norm(tens))
     assert np.isclose(tl.norm(tt_ortho.cores[3].tensor), tl.norm(tens))
     assert np.isclose(tt.dot(tt), tt_ortho.norm() ** 2)
+    assert np.isclose(tt_ortho.dot(tt_ortho), tt_ortho.norm() ** 2)
     # assert np.isclose(tl.norm(tt_ortho.cores[1].tensor),1)
     tback_ortho = tt_ortho.contract(to_array=True)
     assert_array_almost_equal(tback_ortho, tens)
+    tadd_ortho = tt_ortho + tt
+    tadd_ortho_back = tadd_ortho.contract(to_array=True)
+    assert_array_almost_equal(tadd_ortho_back, 2*tens)
 
 
 def test_tt_random():
     shape = [10, 30, 10, 15, 16, 3]
-    ranks = [10, 20, 10, 5, 20]
+    ranks = [1, 10, 20, 10, 5, 20,1]
     tt = tt_random(shape, ranks)
     assert np.isclose(tt.norm(), tt.dot(tt))
+
+
+def test_shiftnorm():
+    tens = np.random.rand(10, 30, 10, 15, 16, 3)
+    tt = TensorTrain(tens)
+    tt_ortho = tt.shiftnorm(3)
+    assert np.isclose(tt_ortho.norm(), tl.norm(tens))
 
 
 def test_update_core():
