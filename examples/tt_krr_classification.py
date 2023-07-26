@@ -1,6 +1,5 @@
 from tensorlibrary import TensorTrain, TTmatrix
-from tensorlibrary.learning.t_krr import CPKRR
-from tensorlibrary.learning.tt_krr import tt_krr, tt_krr_predict
+from tensorlibrary.learning.t_krr import CPKRR, TTKRR
 import numpy as np
 import tensorly as tl
 
@@ -55,7 +54,7 @@ cpkrr = CPKRR(
     M=m,
     num_sweeps=15,
     reg_par=1e-5,
-    feature_map="chebyshev",
+    feature_map="poly",
     map_param=lengthscale,
     random_state=random_state,
 )
@@ -72,19 +71,30 @@ acc = np.sum(y_pred == y_test) / len(y_test)
 print("Accuracy CP-KRR: ", acc)
 
 # %% TT-KRR
-tt = tt_krr(
-    X_train,
-    y_train,
-    m=m,
-    ranks=2,
+# tt = tt_krr(
+#     X_train,
+#     y_train,
+#     m=m,
+#     ranks=2,
+#     reg_par=0,
+#     num_sweeps=10,
+#     feature_map="rbf",
+#     map_param=lengthscale,
+# )
+# y_pred = tt_krr_predict(
+#     tt, X_test, m=m, reg_par=0, feature_map="rbf", map_param=lengthscale
+# )
+tt_krr = TTKRR(
+    M=3,
+    num_sweeps=2,
     reg_par=0,
-    num_sweeps=10,
     feature_map="rbf",
     map_param=lengthscale,
+    random_state=random_state,
+    max_rank=30
 )
-y_pred = tt_krr_predict(
-    tt, X_test, m=m, reg_par=0, feature_map="rbf", map_param=lengthscale
-)
+tt_krr = tt_krr.fit(X_train, y_train)
+y_pred = tt_krr.predict(X_test)
 acc = np.sum(y_pred == y_test) / len(y_test)
 print("Accuracy TT-KRR: ", acc)
 

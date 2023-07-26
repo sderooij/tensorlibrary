@@ -25,7 +25,7 @@ from ._cp_krr import get_system_cp_krr
 from .tt_krr import get_tt_rank, update_wz_tt, initialize_wz
 from .features import features
 from ..random import tt_random
-from ..linalg import dot_kron
+from ..linalg import dot_kron, truncated_svd
 from abc import ABC, abstractmethod, ABCMeta
 
 
@@ -101,7 +101,6 @@ class TTKRR(BaseTKRR, ClassifierMixin):
     def fit(self, x: tl.tensor, y: tl.tensor, **kwargs):
         self.classes_ = tl.tensor([-1, 1])  # TODO based on y
 
-        rnd = check_random_state(self.random_state)
         # check that x and y have correct shape
         x, y = check_X_y(x, y, y_numeric=True, multi_output=False)
         N, D = x.shape
@@ -135,6 +134,11 @@ class TTKRR(BaseTKRR, ClassifierMixin):
         ltr = True  # left to right sweep
         for ite in range(self.num_sweeps):
             for d in sweep:
+                # update ltr
+                if d == D - 1:
+                    ltr = False
+                elif d == 0:
+                    ltr = True
                 z_d = features(x[:, d], m=self.M, feature_map=self.feature_map, map_param=self.map_param)
                 # construct linear subsystem matrix
 
@@ -142,14 +146,22 @@ class TTKRR(BaseTKRR, ClassifierMixin):
                     WZ_left[d],
                     dot_kron(z_d, WZ_right[d])
                 )
-                # Solve the sytem
-                # TODO: check with pinv
-                CC = tl.dot(WZ.T, WZ)
-                CC += self.reg_par * tl.eye(CC.shape[0])
-                yy = tl.dot(WZ.T, y)
-                new_weight = tl.solve(CC, yy)
+                # %% Solve the sytem
 
-                # orthogonalize
+                # with solve, regularization needed
+                # CC = tl.dot(WZ.T, WZ)
+                # CC += self.reg_par * tl.eye(CC.shape[0])
+                # yy = tl.dot(WZ.T, y)
+                # new_weight = tl.solve(CC, yy)
+
+                # with pinv, no regularization needed
+                # new_weight = np.linalg.pinv(WZ) @ y
+
+                # with truncated svd
+                u, s, v, _ = truncated_svd(WZ, max_trunc_error=0.05, relative=True)
+                new_weight = v.T @ np.diag(1 / s) @ u.T @ y
+
+                # %% orthogonalize
                 if ltr:
                     new_weight = new_weight.reshape(
                         (tl.prod([self.M, ranks[d]], dtype=int), ranks[d+1]),
@@ -176,16 +188,30 @@ class TTKRR(BaseTKRR, ClassifierMixin):
                     # update WZ right
                     WZ_right[d-1] = update_wz_tt(w[d], z_d, WZ_right[d], mode="right")
 
-                # update ltr
-                if d == D-2:
-                    ltr = False
-                elif d == 0:
-                    ltr = True
 
+        self.weights_ = w
         return self
+
+    def decision_function(self, x: tl.tensor, **kwargs):
+        """Compute the decision function for the input samples"""
+        D = x.shape[1]
+        y_pred = update_wz_tt(
+            self.weights_[0],
+            features(x[:, 0], m=self.M, feature_map=self.feature_map, map_param=self.map_param),
+            None,
+            mode="first")
+        for d in range(1, D):
+            y_pred = update_wz_tt(
+                self.weights_[d],
+                features(x[:, d], m=self.M, feature_map=self.feature_map, map_param=self.map_param),
+                y_pred,
+                mode="left")
+        return y_pred[:,0]
 
     def predict(self, x: tl.tensor, **kwargs):
-        return self
+        """Predict class labels for samples in x"""
+        y_pred = self.decision_function(x)
+        return tl.sign(y_pred)
 
 
 class CPKRR(BaseTKRR, ClassifierMixin):

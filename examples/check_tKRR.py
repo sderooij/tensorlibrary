@@ -52,12 +52,18 @@ wz_1 = data['WZ_1'][0]
 data = loadmat("../data/breast_cancer.mat")
 X_train = data["X_train"]
 y_train = data["y_train"].ravel()
+X_test = data["X_test"]
+y_test = data["y_test"].ravel()
 
 # w = [core for core in w.T]
 w = list(w[0])
 # wz_left, wz_right = tl_learn.initialize_wz(w, X_train, M=3, feature_map="rbf", map_param=0.1, k_core=0)
 from tensorlibrary.learning.t_krr import TTKRR
 
-ttkrr = TTKRR(max_rank=[], M=3,feature_map="rbf", map_param=0.1, reg_par=0, num_sweeps=2, w_init=w)
+ttkrr = TTKRR(max_rank=30, M=3,feature_map="rbf", map_param=0.1, reg_par=1e-10, num_sweeps=5)
 
-ttkrr.fit(X_train, y_train)
+ttkrr = ttkrr.fit(X_train, y_train)
+
+#%% test
+yhat = ttkrr.predict(X_test)
+print(np.mean(yhat == y_test))

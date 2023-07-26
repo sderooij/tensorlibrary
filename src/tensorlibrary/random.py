@@ -5,7 +5,8 @@ from typing import Any, List, Optional, Text, Type, Union, Dict, Sequence
 from tensorly.random import random_tensor
 import tensorly as tl
 from tensorly.backend import check_random_state
-from .Decompositions.TensorTrain import TensorTrain
+from .decompositions.TensorTrain import TensorTrain
+from scipy import linalg
 
 
 def tt_random(
@@ -23,26 +24,17 @@ def tt_random(
         TensorTrain: the random tensor-train
     """
     # TODO : add option to generate a random tensor-train with a given norm and norm_index
-    # cores = list()
-    # d = len(shape)
-    # assert len(ranks) == d - 1, "ranks must be of length d-1"
-    # # if norm_index is None:
-    # #     norm_index = d - 1
-    # ranks = ranks.copy()
-    # ranks = list(ranks)
-    # ranks.insert(0, 1)
-    # ranks.append(1)
-    # ranks = [int(r) for r in ranks]
-    # shape = [int(s) for s in shape]
-    d = len(shape)
-    cores = list()
-    rnd = check_random_state(random_state)
 
-    for k in range(0, d):
-        core1 = tl.tensor(rnd.random_sample((int(ranks[k] * shape[k]), ranks[k + 1])))
-        core1, _ = tl.qr(core1, mode="reduced")
-        ranks[k + 1] = core1.shape[1]
-        cores.append(tl.reshape(core1, (ranks[k], shape[k], ranks[k + 1]), order="F"))
+    d = len(shape)
+    rnd = check_random_state(random_state)
+    cores = [None for _ in range(d)]
+    cores[0] = tl.tensor(rnd.random_sample((ranks[0], int(shape[0]), ranks[1])))
+    cores[0] = cores[0] / tl.norm(cores[0])
+
+    for k in range(d-1, 0, -1):
+        core1 = tl.tensor(rnd.random_sample((int(ranks[k+1] * shape[k]), ranks[k])))
+        Q = linalg.orth(core1)
+        cores[k] = Q.T.reshape((ranks[k], int(shape[k]), ranks[k+1]))
 
     if cores_only:
         return cores

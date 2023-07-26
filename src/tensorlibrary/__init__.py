@@ -1,3 +1,3 @@
-from .Decompositions.TensorTrain import TensorTrain, QTT
-from .Decompositions.TTmatrix import TTmatrix
+from .decompositions.TensorTrain import TensorTrain, QTT
+from .decompositions.TTmatrix import TTmatrix
 

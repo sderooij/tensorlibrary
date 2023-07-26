@@ -1,7 +1,7 @@
 # TODO check that the reshapes are correct (C row major instead of column major)
 import numpy as np
 
-from ..Decompositions.TensorTrain import TensorTrain
+from ..decompositions.TensorTrain import TensorTrain
 from ..random import tt_random
 from ..linalg import dot_kron, multi_dot_kron
 from .features import features
