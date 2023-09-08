@@ -1,5 +1,6 @@
 
 import tensorly as tl
+from tensorly import tenalg
 from tensorlibrary import learning as tl_learn
 from tensorlibrary.linalg import dot_kron
 # import tensorlibrary.learning.t_krr as t_krr
@@ -44,6 +45,9 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
 from scipy.io import loadmat
 import numpy as np
+tenalg.set_backend('core')
+from tensorly import plugins
+plugins.use_default_einsum()
 
 data = loadmat("../data/tt_init.mat")
 w = data["w"]

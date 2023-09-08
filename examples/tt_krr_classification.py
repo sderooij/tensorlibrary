@@ -42,7 +42,7 @@ X_test = scaler.transform(X_test)
 
 
 # %% train the model
-m = 3
+m = 5
 rank = 20
 random_state = 42
 lengthscale = 0.1
@@ -52,8 +52,8 @@ scoring = {"F1": make_scorer(f1_score)}
 # w0 = sio.loadmat("../data/init_val.mat")["W"][0]
 cpkrr = CPKRR(
     M=m,
-    num_sweeps=15,
-    reg_par=1e-5,
+    num_sweeps=10,
+    reg_par=1e-3,
     feature_map="poly",
     map_param=lengthscale,
     random_state=random_state,

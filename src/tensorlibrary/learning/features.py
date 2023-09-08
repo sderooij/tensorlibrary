@@ -13,7 +13,7 @@ def features(x_d, m: int, feature_map="rbf", *, map_param=1.0):
     Returns:
         z_x : mapped features (D x m)
     """
-    if feature_map == "rbf" or "fourier":
+    if feature_map == "rbf" or feature_map == "fourier":
         x_d = (x_d + 0.5) * 0.5
         w = tl.arange(1, m + 1)
         s = (

@@ -118,7 +118,6 @@ class TTKRR(BaseTKRR, ClassifierMixin):
             w = tt_random(
                 shape_weights, ranks, random_state=self.random_state, cores_only=True
             )
-            # TODO: check if this is correct
 
         elif isinstance(self.w_init, list):
             w = self.w_init
@@ -128,7 +127,6 @@ class TTKRR(BaseTKRR, ClassifierMixin):
             raise TypeError("Unsupported w_int type")
 
         # Initialize feature map
-        # TODO: test the shit out of it
         WZ_left, WZ_right = initialize_wz(w, x, self.M, self.feature_map, self.map_param, 0)
         sweep = list(range(0, D-1)) + list(range(D-1, 0, -1))
         ltr = True  # left to right sweep
@@ -147,7 +145,7 @@ class TTKRR(BaseTKRR, ClassifierMixin):
                     dot_kron(z_d, WZ_right[d])
                 )
                 # %% Solve the sytem
-
+                # TODO : make solver a variable + implement batch mode
                 # with solve, regularization needed
                 # CC = tl.dot(WZ.T, WZ)
                 # CC += self.reg_par * tl.eye(CC.shape[0])
@@ -287,6 +285,8 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             #     weights_.append(w_d)
         elif isinstance(self.w_init, list):
             w = self.w_init
+        elif isinstance(self.w_init, tl.cp_tensor.CPTensor):
+            w = self.w_init.factors
         else:
             raise ValueError("w_init must be a CPTensor or a list of factors")
 
@@ -304,7 +304,7 @@ class CPKRR(BaseTKRR, ClassifierMixin):
         for it in range(itemax):
             for d in range(0, D):
                 z_x = features(
-                    x[:, d], self.M, self.feature_map, map_param=self.map_param
+                    x[:, d], self.M, feature_map=self.feature_map, map_param=self.map_param
                 )
 
                 reg /= w[d].T @ w[d]  # remove current factor
