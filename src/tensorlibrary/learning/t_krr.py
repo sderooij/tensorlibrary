@@ -48,6 +48,7 @@ class BaseTKRR(BaseEstimator, metaclass=ABCMeta):
         max_rank=1,
         random_state=None,
         class_weight=None,
+        max_iter=tl.inf,
     ):
         self.M = M
         self.w_init = w_init
@@ -58,6 +59,7 @@ class BaseTKRR(BaseEstimator, metaclass=ABCMeta):
         self.max_rank = max_rank
         self.random_state = random_state
         self.class_weight = class_weight
+        self.max_iter = max_iter
 
     @abstractmethod
     def fit(self, x: tl.tensor, y: tl.tensor, **kwargs):
@@ -244,6 +246,7 @@ class CPKRR(BaseTKRR, ClassifierMixin):
         max_rank=5,
         random_state=None,
         class_weight="balanced",
+        max_iter=tl.inf,
     ):
         super().__init__(
             M=M,
@@ -255,6 +258,7 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             max_rank=max_rank,
             random_state=random_state,
             class_weight=class_weight,
+            max_iter=max_iter,
         )
 
         # self.weights_ = w_init
@@ -285,6 +289,8 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             #     weights_.append(w_d)
         elif isinstance(self.w_init, list):
             w = self.w_init
+            for d in range(D):
+                w[d] /= tl.norm(w[d], order=2, axis=0)
         elif isinstance(self.w_init, tl.cp_tensor.CPTensor):
             w = self.w_init.factors
         else:
@@ -300,26 +306,27 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             G = (z_x @ w_d) * G
 
         # ALS sweeps
-        itemax = self.num_sweeps * 2
+        itemax = int(tl.min([self.num_sweeps * D, self.max_iter]))
         for it in range(itemax):
-            for d in range(0, D):
-                z_x = features(
-                    x[:, d], self.M, feature_map=self.feature_map, map_param=self.map_param
-                )
+            d = it % D
 
-                reg /= w[d].T @ w[d]  # remove current factor
-                G /= z_x @ w[d]  # remove current factor
-                CC, Cy = get_system_cp_krr(z_x, G, y)
-                w_d = tl.solve(CC + self.reg_par * N * tl.kron(reg, tl.eye(self.M)), Cy)
-                del CC, Cy
-                w[d] = tl.reshape(
-                    w_d, (self.M, self.max_rank), order="F"
-                )
-                # weights_ = tl.cp_tensor.cp_normalize(weights_)
-                loadings = tl.norm(w[d], order=2, axis=0)
-                w[d] /= loadings
-                reg *= w[d].T @ w[d]  # add current factor
-                G *= z_x @ w[d]  # add current factor
+            z_x = features(
+                x[:, d], self.M, feature_map=self.feature_map, map_param=self.map_param
+            )
+
+            reg /= w[d].T @ w[d]  # remove current factor
+            G /= z_x @ w[d]  # remove current factor
+            CC, Cy = get_system_cp_krr(z_x, G, y)
+            w_d = tl.solve(CC + self.reg_par * N * tl.kron(reg, tl.eye(self.M)), Cy)
+            del CC, Cy
+            w[d] = tl.reshape(
+                w_d, (self.M, self.max_rank), order="F"
+            )
+            # weights_ = tl.cp_tensor.cp_normalize(weights_)
+            loadings = tl.norm(w[d], order=2, axis=0)
+            w[d] /= loadings
+            reg *= w[d].T @ w[d]  # add current factor
+            G *= z_x @ w[d]  # add current factor
 
         w[d] = w[d] * loadings
         self.weights_ = w
