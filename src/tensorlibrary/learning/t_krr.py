@@ -46,6 +46,7 @@ class BaseTKRR(BaseEstimator, metaclass=ABCMeta):
         num_sweeps=2,
         map_param=1.0,
         max_rank=1,
+        mu=0,
         random_state=None,
         class_weight=None,
         max_iter=tl.inf,
@@ -60,6 +61,7 @@ class BaseTKRR(BaseEstimator, metaclass=ABCMeta):
         self.random_state = random_state
         self.class_weight = class_weight
         self.max_iter = max_iter
+        self.mu = mu
 
     @abstractmethod
     def fit(self, x: tl.tensor, y: tl.tensor, **kwargs):
@@ -85,6 +87,7 @@ class TTKRR(BaseTKRR, ClassifierMixin):
         num_sweeps=15,
         map_param=0.1,
         max_rank=5,
+        mu=0,
         random_state=None,
         class_weight="balanced",
     ):
@@ -99,9 +102,15 @@ class TTKRR(BaseTKRR, ClassifierMixin):
             random_state=random_state,
             class_weight=class_weight,
         )
+        self.mu = mu
 
     def fit(self, x: tl.tensor, y: tl.tensor, **kwargs):
         self.classes_ = tl.tensor([-1, 1])  # TODO based on y
+
+        if self.mu != 0 and self.w_init is not None:
+            self._extra_reg = True
+        else:
+            self._extra_reg = False
 
         # check that x and y have correct shape
         x, y = check_X_y(x, y, y_numeric=True, multi_output=False)
@@ -131,7 +140,7 @@ class TTKRR(BaseTKRR, ClassifierMixin):
         # Initialize feature map
         WZ_left, WZ_right = initialize_wz(w, x, self.M, self.feature_map, self.map_param, 0)
         sweep = list(range(0, D-1)) + list(range(D-1, 0, -1))
-        ltr = True  # left to right sweep
+        ltr = True  # left to right _sweep
         for ite in range(self.num_sweeps):
             for d in sweep:
                 # update ltr
@@ -227,7 +236,8 @@ class CPKRR(BaseTKRR, ClassifierMixin):
         "feature_map": [
             StrOptions({"rbf", "fourier", "poly", "chebyshev", "chebyshev2"})
         ],
-        "reg_par": [Interval(Real, 0, None, closed="left")],
+        "reg_par": [Interval(Real, 0, None, closed="neither")],
+        "mu": [Interval(Real, 0, None, closed="neither")],
         "num_sweeps": [Interval(Real, 1, None, closed="left")],
         "map_param": [Interval(Real, 0, None, closed="neither")],
         "max_rank": [Interval(Real, 1, None, closed="left")],
@@ -245,6 +255,7 @@ class CPKRR(BaseTKRR, ClassifierMixin):
         map_param=0.1,
         max_rank=5,
         random_state=None,
+        mu=0,
         class_weight="balanced",
         max_iter=tl.inf,
     ):
@@ -259,12 +270,19 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             random_state=random_state,
             class_weight=class_weight,
             max_iter=max_iter,
+            mu=mu,
         )
 
         # self.weights_ = w_init
 
     def fit(self, x: tl.tensor, y: tl.tensor, **kwargs):
         self.classes_ = tl.tensor([-1, 1])  # TODO based on y
+
+        if self.mu != 0 and self.w_init is not None:
+            self._extra_reg = True
+            self.reg_par += self.mu
+        else:
+            self._extra_reg = False
 
         rnd = check_random_state(self.random_state)
         # check that x and y have correct shape
@@ -280,7 +298,8 @@ class CPKRR(BaseTKRR, ClassifierMixin):
                 random_state=self.random_state,
                 normalise_factors=True,
             )
-            w = temp.factors
+            self.w_init = temp.factors
+            w = self.w_init
             # weights_ = []
             # for d in range(D):
             #     w_d = np.random.randn(self.M, self.max_rank, random_state=self.random_state)
@@ -305,6 +324,9 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             z_x = features(x[:, d], self.M, self.feature_map, map_param=self.map_param)
             G = (z_x @ w_d) * G
 
+        if self._extra_reg:
+            extra_reg = reg
+
         # ALS sweeps
         itemax = int(tl.min([self.num_sweeps * D, self.max_iter]))
         for it in range(itemax):
@@ -317,6 +339,11 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             reg /= w[d].T @ w[d]  # remove current factor
             G /= z_x @ w[d]  # remove current factor
             CC, Cy = get_system_cp_krr(z_x, G, y)
+
+            if self._extra_reg:
+                extra_reg /= w[d].T @ self.w_init[d]
+                Cy += self.mu * tl.reshape(self.w_init[d]*extra_reg.T, (-1, 1), order='F')
+
             w_d = tl.solve(CC + self.reg_par * N * tl.kron(reg, tl.eye(self.M)), Cy)
             del CC, Cy
             w[d] = tl.reshape(
@@ -327,6 +354,7 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             w[d] /= loadings
             reg *= w[d].T @ w[d]  # add current factor
             G *= z_x @ w[d]  # add current factor
+            extra_reg *= w[d].T @ self.w_init[d]
 
         w[d] = w[d] * loadings
         self.weights_ = w

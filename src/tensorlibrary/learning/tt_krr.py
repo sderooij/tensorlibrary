@@ -48,7 +48,7 @@ def tt_krr(x, y, m, ranks, reg_par, num_sweeps, feature_map="rbf", map_param=1.0
 
 
 def tt_krr_als(weights, x, y, m, reg_par, num_sweeps, feature_map="rbf", map_param=1.0):
-    for ite in range(0, num_sweeps):  # forward and backward sweep
+    for ite in range(0, num_sweeps):  # forward and backward _sweep
         weights = tt_krr_sweep(
             weights,
             x,
@@ -66,7 +66,7 @@ def tt_krr_sweep(
     weights, x, y, m: int, reg_par: float, map_param: float = 1.0, feature_map="rbf"
 ):
     """
-    One sweep of the TT-KRR algorithm.  Forward and backward sweep.
+    One _sweep of the TT-KRR algorithm.  Forward and backward _sweep.
     Args:
         weights: d-dimensional tensor train
         x: data (N x D)
@@ -126,7 +126,7 @@ def tt_krr_sweep(
         # update core
         sz = [s for s in reversed(weights.cores[k_core].shape)]
         weights.update_core(k_core, tl.reshape(new_weight, tuple(sz)).T)
-        # shift norm to next core of the sweep
+        # shift norm to next core of the _sweep
         if iter < len(sweep) - 1:
             weights.shiftnorm(sweep[iter + 1], inplace=True)
         else:

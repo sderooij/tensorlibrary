@@ -28,3 +28,15 @@ def get_system_cp_krr(z_x, g, y):
         b += temp.T @ y[i:idx_end]
 
     return A, b
+
+
+def init_k(W, V):
+
+    #WV^T
+    assert len(W) == len(V)
+    WV = tl.ones((W[0].shape[1], V[0].shape[1]))
+    for d in range(1, len(W)):
+        WV *= W[d] @ V[d].T
+
+    k = V[0] @ WV.T
+    return k.reshape((-1, 1), order='F') #flatten M x R_w
