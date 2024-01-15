@@ -4,6 +4,7 @@
 
 import numpy as np
 import tensorly as tl
+from numba import njit
 from typing import Any, List, Optional, Text, Type, Union, Dict, Sequence
 
 
@@ -109,3 +110,22 @@ def multi_dot_kron(matlist):
         matrix of size N x (M1*M2*...*MP)
     """
     return tl.tenalg.khatri_rao([mat.T for mat in matlist]).T
+
+
+@njit(parallel=True)
+def dot_kron_numba(a, b):
+    """
+    Computes the row-wise right kronecker product of two matrices.
+    Args:
+        a: first matrix (N x M)
+        b: second matrix (N x P)
+
+    Returns:
+        matrix of size N x (M*P)
+    """
+    at = np.reshape(a, (a.shape[0], 1, a.shape[1]))
+    bt = np.reshape(b, (b.shape[0], b.shape[1], 1))
+    temp = at * bt
+    return np.reshape(temp, (a.shape[0], -1))
+
+

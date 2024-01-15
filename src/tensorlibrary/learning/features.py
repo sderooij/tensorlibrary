@@ -11,7 +11,7 @@ def features(x_d, m: int, feature_map="rbf", *, map_param=1.0):
         map_param: parameters of the kernel function. lengthscale for rbf
 
     Returns:
-        z_x : mapped features (D x m)
+        z_x : mapped features (N x m)
     """
     if feature_map == "rbf" or feature_map == "fourier":
         x_d = (x_d + 0.5) * 0.5

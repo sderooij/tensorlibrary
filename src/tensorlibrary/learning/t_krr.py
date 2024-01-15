@@ -342,7 +342,7 @@ class CPKRR(BaseTKRR, ClassifierMixin):
 
             if self._extra_reg:
                 extra_reg /= w[d].T @ self.w_init[d]
-                Cy += self.mu * tl.reshape(self.w_init[d]*extra_reg.T, (-1, 1), order='F')
+                Cy += self.mu * tl.reshape(self.w_init[d] @ extra_reg.T, (-1,), order='F')
 
             w_d = tl.solve(CC + self.reg_par * N * tl.kron(reg, tl.eye(self.M)), Cy)
             del CC, Cy
@@ -354,7 +354,8 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             w[d] /= loadings
             reg *= w[d].T @ w[d]  # add current factor
             G *= z_x @ w[d]  # add current factor
-            extra_reg *= w[d].T @ self.w_init[d]
+            if self._extra_reg:
+                extra_reg *= w[d].T @ self.w_init[d]
 
         w[d] = w[d] * loadings
         self.weights_ = w
