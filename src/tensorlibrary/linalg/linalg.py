@@ -5,7 +5,8 @@
 import numpy as np
 import tensorly as tl
 from numba import njit
-from typing import Any, List, Optional, Text, Type, Union, Dict, Sequence
+from numba.typed import List
+from typing import Any, Optional, Text, Type, Union, Dict, Sequence
 
 
 def truncated_svd(
@@ -112,7 +113,7 @@ def multi_dot_kron(matlist):
     return tl.tenalg.khatri_rao([mat.T for mat in matlist]).T
 
 
-@njit(parallel=True)
+@njit()
 def dot_kron_numba(a, b):
     """
     Computes the row-wise right kronecker product of two matrices.
@@ -127,5 +128,40 @@ def dot_kron_numba(a, b):
     bt = np.reshape(b, (b.shape[0], b.shape[1], 1))
     temp = at * bt
     return np.reshape(temp, (a.shape[0], -1))
+
+
+def dot_r1(a,b):
+    """
+    Dot product of two rank-1 tensors. (kronecker products)
+    Args:
+        a: list of d vectors that define the rank-1 tensor (can be of different lengths)
+        b: list of d vectors that define the rank-1 tensor (same dimensions as a)
+
+    Returns:
+        scalar: dot product of the two rank-1 tensors
+    """
+    prod = 1.0
+    for i, ai in enumerate(a):
+        prod *= (ai.T @ b[i]).item()
+
+    return prod
+
+
+@njit()
+def dot_r1_numba(a,b):
+    """
+    Dot product of two rank-1 tensors. (kronecker products)
+    Args:
+        a: numba.typed.List of d vectors that define the rank-1 tensor (can be of different lengths)
+        b: numba.typed.List of d vectors that define the rank-1 tensor (same dimensions as a)
+
+    Returns:
+        scalar: dot product of the two rank-1 tensors
+    """
+    prod = 1.0
+    for i, ai in enumerate(a):
+        prod *= (ai.T @ b[i]).item()
+
+    return prod
 
 
