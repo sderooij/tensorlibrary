@@ -7,6 +7,9 @@ import tensorly as tl
 from sklearn.metrics.pairwise import rbf_kernel
 import random
 
+from numba import njit
+import numpy as np
+
 # local imports
 from tensorlibrary.learning.features import features
 from tensorlibrary.linalg.linalg import dot_r1
@@ -28,7 +31,7 @@ def cos_sim_feat(phi_x: list, phi_y: list) -> float:
     return dot_r1(phi_x, phi_y) / (norm_x * norm_y)
 
 
-def uncertainty_samp(outputs, n_samples=-1, thresh=-1):
+def uncertainty_strategy(outputs, n_samples=-1, thresh=-1):
     """
     Perform uncertainty sampling to select the most uncertain samples.
     Either select the n_samples most uncertain samples or select samples below a certain threshold.
@@ -103,6 +106,58 @@ def combined_strategy(x_feat, outputs, max_samples, l=0.5, sim_measure='cos', fe
 
     return indices
 
+def diversity_strategy(x_feat, max_samples, sim_measure='cos', feature_map='rbf', map_param=1.0, \
+    approx=False, min_div_max=0.):
+    """
+    Perform combined strategy for active learning.
+    Args:
+        x_feat: features of the data
+        outputs: model outputs
+        max_samples: maximum number of samples to select for the batch
+        l: trade-off parameter between uncertainty and diversity (0.5 by default)
+        sim_measure: similarity measure, default is cosine similarity: 'cos'
+        feature_map: feature map to use, default is rbf kernel: 'rbf'
+        map_param: parameter for the feature map (or kernel function), default is 1.0
+        approx: whether to use the approximate feature map instead of kernel function
+        min_div_max: minimum value the maximum diversity measure, break if all values are below this threshold
+
+    Returns:
+        indices: indices of the most uncertain samples
+    """
+    # initialize indices
+    indices = np.zeros(max_samples, dtype=np.int32)
+    indices[0] = random.randint(0, x_feat.shape[0])
+    # compute diversity measure to the first sample
+    sim = np.zeros((x_feat.shape[0], max_samples-1))
+    for k in range(0, max_samples-1):
+        if not approx:
+            if feature_map == 'rbf' and sim_measure == 'cos': # cosine similarity for rbf kernel is the same as rbf kernel
+                # sim[:, k] = (rbf_kernel(x_feat, x_feat[indices[k], :].reshape(1, -1), gamma=map_param)).reshape(-1)
+                sim[:,k] = rbf(x_feat, x_feat[indices[k], :], map_param)
+            else:
+                raise NotImplementedError
+        else:
+            raise NotImplementedError
+        # take max over the columns
+        sim_max = np.max(sim, axis=1)  # results in N_feats x 1
+        if np.all(sim_max[~indices[k]] < min_div_max):
+            indices = indices[:k]
+            break
+
+        indices[k+1] = np.argmin(sim_max)
+
+    return indices
 
 
+def rbf(x,y, sigma):
+    """
+    Compute the RBF kernel function.
+    Args:
+        x: first input
+        y: second input
+        sigma: kernel parameter
 
+    Returns:
+        scalar: kernel function value
+    """
+    return np.exp(-0.5*np.linalg.norm(x - y, axis=1, ord=2)**2 / sigma**2)
