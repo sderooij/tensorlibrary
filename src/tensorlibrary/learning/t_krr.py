@@ -300,12 +300,6 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             )
             self.w_init = temp.factors
             w = self.w_init
-            # weights_ = []
-            # for d in range(D):
-            #     w_d = np.random.randn(self.M, self.max_rank, random_state=self.random_state)
-            #     loadings = tl.norm(w_d, order=2, axis=0)
-            #     w_d = w_d / loadings
-            #     weights_.append(w_d)
         elif isinstance(self.w_init, list):
             w = self.w_init
             for d in range(D):
@@ -316,13 +310,35 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             raise ValueError("w_init must be a CPTensor or a list of factors")
 
         # initialize mapped features
-        reg = 1
-        G = 1
-        for d in range(D - 1, -1, -1):  # D-1:-1:0
-            w_d = w[d]
-            reg *= w_d.T @ w_d
-            z_x = features(x[:, d], self.M, self.feature_map, map_param=self.map_param)
-            G = (z_x @ w_d) * G
+        if self.class_weight is None:
+            reg = 1
+            G = 1
+            for d in range(D - 1, -1, -1):  # D-1:-1:0
+                w_d = w[d]
+                reg *= w_d.T @ w_d
+                z_x = features(x[:, d], self.M, self.feature_map, map_param=self.map_param)
+                G = (z_x @ w_d) * G
+            balanced = False
+        elif self.class_weight == 'balanced':
+            # count class instances in y
+            idx_p = tl.where(y == 1)[0]
+            idx_n = tl.where(y == -1)[0]
+            Np = tl.sum(y == 1)
+            Nn = tl.sum(y == -1)
+            Cp = N / (2 * Np)
+            Cn = N / (2 * Nn)
+
+            reg = 1
+            Gn = 1
+            Gp = 1
+            for d in range(D - 1, -1, -1):  # D-1:-1:0
+                w_d = w[d]
+                reg *= w_d.T @ w_d
+                z_x_n = features(x[idx_n, d], self.M, self.feature_map, map_param=self.map_param)
+                z_x_p = features(x[idx_p, d], self.M, self.feature_map, map_param=self.map_param)
+                Gn = (z_x_n @ w_d) * Gn
+                Gp = (z_x_p @ w_d) * Gp
+            balanced = True
 
         if self._extra_reg:
             extra_reg = reg
@@ -332,13 +348,24 @@ class CPKRR(BaseTKRR, ClassifierMixin):
         for it in range(itemax):
             d = it % D
 
-            z_x = features(
-                x[:, d], self.M, feature_map=self.feature_map, map_param=self.map_param
-            )
+            if not balanced:
+                z_x = features(
+                    x[:, d], self.M, feature_map=self.feature_map, map_param=self.map_param
+                )
 
-            reg /= w[d].T @ w[d]  # remove current factor
-            G /= z_x @ w[d]  # remove current factor
-            CC, Cy = get_system_cp_krr(z_x, G, y)
+                reg /= w[d].T @ w[d]  # remove current factor
+                G /= z_x @ w[d]  # remove current factor
+                CC, Cy = get_system_cp_krr(z_x, G, y)
+            else:
+                z_x_n = features(x[idx_n, d], self.M, self.feature_map, map_param=self.map_param)
+                z_x_p = features(x[idx_p, d], self.M, self.feature_map, map_param=self.map_param)
+                reg /= w[d].T @ w[d]
+                Gn /= z_x_n @ w[d]
+                Gp /= z_x_p @ w[d]
+                CCn, Cyn = get_system_cp_krr(z_x_n, Gn, y[idx_n])
+                CCp, Cyp = get_system_cp_krr(z_x_p, Gp, y[idx_p])
+                CC = Cn*CCn + Cp*CCp
+                Cy = Cn*Cyn + Cp*Cyp
 
             if self._extra_reg:
                 extra_reg /= w[d].T @ self.w_init[d]
@@ -353,7 +380,12 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             loadings = tl.norm(w[d], order=2, axis=0)
             w[d] /= loadings
             reg *= w[d].T @ w[d]  # add current factor
-            G *= z_x @ w[d]  # add current factor
+            if not balanced:
+                G *= z_x @ w[d]  # add current factor
+            else:
+                Gn *= z_x_n @ w[d]
+                Gp *= z_x_p @ w[d]
+
             if self._extra_reg:
                 extra_reg *= w[d].T @ self.w_init[d]
 
