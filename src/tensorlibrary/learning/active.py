@@ -15,20 +15,49 @@ from tensorlibrary.learning.features import features
 from tensorlibrary.linalg.linalg import dot_r1
 
 
-def cos_sim_feat(phi_x: list, phi_y: list) -> float:
-    """
-    Determine the cosine similarity between two mapped features.
-    Args:
-        phi_x: mapped features x, d-dimensional list (1D tensor)
-        phi_y: mapped features y, d-dimensional list (1D tensor)
+# def cos_sim_feat(phi_x: list, phi_y: list) -> float:
+#     """
+#     Determine the cosine similarity between two mapped features.
+#     Args:
+#         phi_x: mapped features x, d-dimensional list (1D tensor)
+#         phi_y: mapped features y, d-dimensional list (1D tensor)
+#
+#     Returns:
+#         scalar: cosine similarity measure between the two mapped features
+#
+#     """
+#     norm_x = tl.sqrt(dot_r1(phi_x, phi_x))
+#     norm_y = tl.sqrt(dot_r1(phi_y, phi_y))
+#     return dot_r1(phi_x, phi_y) / (norm_x * norm_y)
 
-    Returns:
-        scalar: cosine similarity measure between the two mapped features
+def cos_sim_map(x, y, m=10, *, feature_map='rbf', map_param=1.0):
+    # x (N_x x d), y (N_y x d)
+    # compute the cosine similarity between samples
+    # TODO: precompute the norms
 
-    """
-    norm_x = tl.sqrt(dot_r1(phi_x, phi_x))
-    norm_y = tl.sqrt(dot_r1(phi_y, phi_y))
-    return dot_r1(phi_x, phi_y) / (norm_x * norm_y)
+    assert x.shape[1] == y.shape[1]
+    D = x.shape[1]
+    N_x = x.shape[0]
+    N_y = y.shape[0]
+    K = tl.ones((N_x, N_y)) # initialize "kernel" matrix Phi^T Phi
+
+    norm_x = tl.ones((N_x, 1))
+    norm_y = tl.ones((N_y, 1))
+    ones_m = tl.ones((m, 1))
+    for d in range(D):
+        phi_x = features(x[:, d], m=m, feature_map=feature_map, map_param=map_param)
+        phi_y = features(y[:, d], m=m, feature_map=feature_map, map_param=map_param)
+        K = (phi_x @ phi_y.T) * K
+
+        norm_x *= (phi_x * phi_x) @ ones_m
+        norm_y *= (phi_y * phi_y) @ ones_m
+
+    # take sqrt to get norms
+    norm_x = tl.sqrt(norm_x)
+    norm_y = tl.sqrt(norm_y)
+    # divide rows by norm_x
+    K = K / (norm_x @ norm_y.T)
+    return K
 
 
 def uncertainty_strategy(outputs, n_samples=-1, thresh=-1):
@@ -82,29 +111,30 @@ def combined_strategy(x_feat, outputs, max_samples, l=0.5, sim_measure='cos', fe
         indices[0] = random.randint(0, x_feat.shape[0])
 
     outputs[indices[0]] = 1e10  # set high to avoid re-selection
-    # compute diversity measure to the first sample
-    div = tl.zeros((x_feat.shape[0], max_samples-1))
+    # compute similarity measure to the first sample
+    sim = tl.zeros((x_feat.shape[0], max_samples-1))
 
     for k in range(0, max_samples-1):
         if not approx:
             if feature_map == 'rbf' and sim_measure == 'cos':
-                div[:, k] = (rbf_kernel(x_feat, x_feat[indices[k], :].reshape(1, -1), gamma=map_param)).reshape(-1)
-            else:
+                sim[:, k] = (rbf_kernel(x_feat, x_feat[indices[k], :].reshape(1, -1), gamma=map_param)).reshape(-1)
+            else: # TODO: use the feature map function.
                 raise NotImplementedError
         else:
             raise NotImplementedError
 
         # div[indices[k], k] = 0  # for max to work
         # take max over the columns o
-        div_max = tl.max(div, axis=1)  # results in N_feats x 1
-        if tl.all(div_max[~indices[k]] < min_div_max):
+        sim_max = tl.max(sim, axis=1)  # results in N_feats x 1
+        if tl.all(sim_max[~indices[k]] < min_div_max):
             indices = indices[:k]
             break
 
-        indices[k+1] = tl.argmin(l*outputs + (1-l)*div_max)
+        indices[k+1] = tl.argmin(l*outputs + (1-l)*sim_max)
         outputs[indices[k+1]] = 1e10 # set high to avoid re-selection
 
     return indices
+
 
 def diversity_strategy(x_feat, max_samples, sim_measure='cos', feature_map='rbf', map_param=1.0, \
     approx=False, min_div_max=0.):
@@ -129,6 +159,10 @@ def diversity_strategy(x_feat, max_samples, sim_measure='cos', feature_map='rbf'
     indices[0] = random.randint(0, x_feat.shape[0])
     # compute diversity measure to the first sample
     sim = np.zeros((x_feat.shape[0], max_samples-1))
+    if approx:
+        # phi_x = features(x_feat,  feature_map, map_param)
+        raise NotImplementedError
+
     for k in range(0, max_samples-1):
         if not approx:
             if feature_map == 'rbf' and sim_measure == 'cos': # cosine similarity for rbf kernel is the same as rbf kernel
@@ -137,7 +171,7 @@ def diversity_strategy(x_feat, max_samples, sim_measure='cos', feature_map='rbf'
             else:
                 raise NotImplementedError
         else:
-            raise NotImplementedError
+            raise NotImplementedError   #TODO: use the feature map function.
         # take max over the columns
         sim_max = np.max(sim, axis=1)  # results in N_feats x 1
         if np.all(sim_max[~indices[k]] < min_div_max):
