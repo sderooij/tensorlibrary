@@ -30,6 +30,69 @@ from tensorlibrary.linalg.linalg import dot_r1
 #     norm_y = tl.sqrt(dot_r1(phi_y, phi_y))
 #     return dot_r1(phi_x, phi_y) / (norm_x * norm_y)
 
+class ActiveLearner:
+    def __init__(self, data, outputs, n_samples, strategy, *, batch_size=None):
+
+        self.data = data
+        self.outputs = outputs
+        self.n_samples = n_samples
+        self.strategy = strategy
+        self.batch_size = batch_size
+        self.algorithm = None
+        self.indices = None
+        if self.strategy == 'uncertainty':
+            self.algorithm = uncertainty_strategy
+        elif self.strategy == 'combined':
+            self.algorithm = combined_strategy
+        elif self.strategy == 'diversity':
+            self.algorithm = diversity_strategy
+        else:
+            raise ValueError("Invalid strategy")
+
+    def select_samples(self, **kwargs):
+        """
+        Select the most informative samples. If batch_size is set, select samples in batches.
+
+        Args:
+            **kwargs: Depends on the strategy used.
+            For combined strategy, the following are required:
+                l: trade-off parameter between uncertainty and diversity (0.5 by default)
+                sim_measure: similarity measure, default is cosine similarity: 'cos'
+                feature_map: feature map to use, default is rbf kernel: 'rbf'
+
+            For diversity strategy, the following are required:
+                x_feat: features of the data
+                max_samples: maximum number of samples to select for the batch
+                sim_measure: similarity measure, default is cosine similarity: 'cos'
+                feature_map: feature map to use, default is rbf kernel: 'rbf'
+                map_param: parameter for the feature map (or kernel function), default is 1.0
+                m: number of basis functions or order of polynomial
+
+        Returns:
+            (indices, selected_samples): indices of the most uncertain samples and the selected samples
+        """
+        if self.batch_size is None:
+            self.indices = self.algorithm(self.data, self.outputs, self.n_samples, **kwargs)
+        else:
+            total_samples = len(self.outputs)
+            n_batches = total_samples // self.batch_size
+            n_samples_per_batch = self.n_samples // n_batches
+            n_samples_last_batch = self.n_samples - n_samples_per_batch * (n_batches - 1)
+            indices = []
+            for k in range(n_batches):
+                idx_start = k * self.batch_size
+                if k == n_batches - 1: # last batch
+                    indices.append(self.algorithm(self.data[idx_start:, :], self.outputs, n_samples_last_batch, **kwargs))
+                else:
+                    idx_end = (k + 1) * self.batch_size
+                    indices.append(self.algorithm(self.data[idx_start:idx_end, :], self.outputs, n_samples_per_batch,
+                                                  **kwargs))
+
+            self.indices = tl.concatenate(indices)
+
+        return self.indices, self.data[self.indices]
+
+
 def cos_sim_map(x, y, m=10, *, feature_map='rbf', map_param=1.0):
     # x (N_x x d), y (N_y x d)
     # compute the cosine similarity between samples
@@ -83,7 +146,7 @@ def uncertainty_strategy(outputs, n_samples=-1, thresh=-1):
     return indices
 
 
-def combined_strategy(x_feat, outputs, max_samples, l=0.5, sim_measure='cos', feature_map='rbf', map_param=1.0, \
+def combined_strategy(x_feat, outputs, max_samples, l=0.5, m=10, sim_measure='cos', feature_map='rbf', map_param=1.0, \
     approx=False, min_div_max=0.):
     """
     Perform combined strategy for active learning.
@@ -110,18 +173,20 @@ def combined_strategy(x_feat, outputs, max_samples, l=0.5, sim_measure='cos', fe
     else: # choose at random
         indices[0] = random.randint(0, x_feat.shape[0])
 
-    outputs[indices[0]] = 1e10  # set high to avoid re-selection
+    outputs[indices[0]] = 1e10  # set high to avoid re-selection and to keep the indices
     # compute similarity measure to the first sample
     sim = tl.zeros((x_feat.shape[0], max_samples-1))
 
     for k in range(0, max_samples-1):
+        # calculate the similarity measure for the k-th sample to add to similarity matrix (kernel matrix)
         if not approx:
             if feature_map == 'rbf' and sim_measure == 'cos':
                 sim[:, k] = (rbf_kernel(x_feat, x_feat[indices[k], :].reshape(1, -1), gamma=map_param)).reshape(-1)
             else: # TODO: use the feature map function.
                 raise NotImplementedError
         else:
-            raise NotImplementedError
+            sim[:, k] = cos_sim_map(x_feat, x_feat[indices[k], :].reshape(1, -1), m=m, feature_map=feature_map,
+                                    map_param=map_param).reshape(-1)
 
         # div[indices[k], k] = 0  # for max to work
         # take max over the columns o
@@ -136,7 +201,7 @@ def combined_strategy(x_feat, outputs, max_samples, l=0.5, sim_measure='cos', fe
     return indices
 
 
-def diversity_strategy(x_feat, max_samples, sim_measure='cos', feature_map='rbf', map_param=1.0, \
+def diversity_strategy(x_feat, max_samples, sim_measure='cos', feature_map='rbf', map_param=1.0, m=10, \
     approx=False, min_div_max=0.):
     """
     Perform combined strategy for active learning.
@@ -159,9 +224,6 @@ def diversity_strategy(x_feat, max_samples, sim_measure='cos', feature_map='rbf'
     indices[0] = random.randint(0, x_feat.shape[0])
     # compute diversity measure to the first sample
     sim = np.zeros((x_feat.shape[0], max_samples-1))
-    if approx:
-        # phi_x = features(x_feat,  feature_map, map_param)
-        raise NotImplementedError
 
     for k in range(0, max_samples-1):
         if not approx:
@@ -171,7 +233,8 @@ def diversity_strategy(x_feat, max_samples, sim_measure='cos', feature_map='rbf'
             else:
                 raise NotImplementedError
         else:
-            raise NotImplementedError   #TODO: use the feature map function.
+            sim[:, k] = cos_sim_map(x_feat, x_feat[indices[k], :].reshape(1, -1), m=m, feature_map=feature_map,
+                                    map_param=map_param).reshape(-1)
         # take max over the columns
         sim_max = np.max(sim, axis=1)  # results in N_feats x 1
         if np.all(sim_max[~indices[k]] < min_div_max):

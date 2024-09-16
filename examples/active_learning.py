@@ -2,7 +2,7 @@ import sklearn
 import numpy as np
 import tensorly as tl
 
-from tensorlibrary.learning.active import combined_strategy
+from tensorlibrary.learning.active import combined_strategy, diversity_strategy
 
 # get some test classification data (binary) from breast cancer dataset
 from sklearn.datasets import load_breast_cancer
@@ -16,6 +16,7 @@ y = 2 * y - 1
 
 # import svm
 from sklearn.svm import SVC
+import time
 
 # create train and test set
 from sklearn.model_selection import train_test_split
@@ -38,7 +39,20 @@ outputs = model.decision_function(X_train)
 
 # only on positive samples
 x_pos = X_train[y_train == 1]
-indices = combined_strategy(x_pos, outputs[y_train==1], int(0.7*x_pos.shape[0]), l =0., map_param=sigma)
+# indices = combined_strategy(x_pos, outputs[y_train==1], int(0.7*x_pos.shape[0]), l =0., map_param=sigma)
+
+start_time = time.time()
+indices = diversity_strategy(x_pos, int(0.5*x_pos.shape[0]), sim_measure='cos', feature_map='rbf', map_param=sigma,
+                             m=10, approx=True, min_div_max=0.0)
+indices2 = diversity_strategy(x_pos, int(0.5*x_pos.shape[0]), sim_measure='cos', feature_map='rbf', map_param=sigma,
+                             approx=False)
+end_time = time.time()
+print(f'Time taken: {end_time - start_time}')
+
+# sort the indices
+indices = np.sort(indices)
+indices2 = np.sort(indices2)
+print(f"Diff: {np.sum(indices != indices2)}")
 
 # get the selected samples
 X_selected = x_pos[indices]
