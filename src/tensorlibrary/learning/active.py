@@ -119,7 +119,7 @@ def cos_sim_map(x, y, m=10, *, feature_map='rbf', map_param=1.0):
     norm_x = tl.sqrt(norm_x)
     norm_y = tl.sqrt(norm_y)
     # divide rows by norm_x
-    K = K / (norm_x @ norm_y.T)
+    # K = K / (norm_x @ norm_y.T)
     return K
 
 

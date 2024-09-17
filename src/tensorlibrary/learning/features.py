@@ -48,3 +48,16 @@ def features(x_d, m: int, feature_map="rbf", *, map_param=1.0):
         raise NotImplementedError
 
     return z_x
+
+
+def fourier_features(x_d, m: int, map_param=1.0, Ld=1.0):
+
+    x_d = (x_d + Ld) / (2*Ld)
+    w = tl.arange(1, m + 1)
+    s = (
+        tl.sqrt(2 * tl.pi)
+        * map_param
+        * tl.exp(-((tl.pi * w.T)/(2*Ld))**2 * map_param**2 / 2)
+    )
+    z_x = (1/tl.sqrt(Ld))*tl.sin(tl.pi * tl.outer(x_d, w)) * tl.sqrt(s)
+    return z_x
