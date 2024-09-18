@@ -93,7 +93,7 @@ class ActiveLearner:
         return self.indices, self.data[self.indices]
 
 
-def cos_sim_map(x, y, m=10, *, feature_map='rbf', map_param=1.0):
+def cos_sim_map(x, y, m=10, *, feature_map='rbf', map_param=1., Ld=1.):
     # x (N_x x d), y (N_y x d)
     # compute the cosine similarity between samples
     # TODO: precompute the norms
@@ -108,9 +108,9 @@ def cos_sim_map(x, y, m=10, *, feature_map='rbf', map_param=1.0):
     norm_y = tl.ones((N_y, 1))
     ones_m = tl.ones((m, 1))
     for d in range(D):
-        phi_x = features(x[:, d], m=m, feature_map=feature_map, map_param=map_param)
-        phi_y = features(y[:, d], m=m, feature_map=feature_map, map_param=map_param)
-        K = (phi_x @ phi_y.T) * K
+        phi_x = features(x[:, d], m=m, feature_map=feature_map, map_param=map_param, Ld=Ld)
+        phi_y = features(y[:, d], m=m, feature_map=feature_map, map_param=map_param, Ld=Ld)
+        K *= (phi_x @ phi_y.T)
 
         norm_x *= (phi_x * phi_x) @ ones_m
         norm_y *= (phi_y * phi_y) @ ones_m
@@ -119,7 +119,7 @@ def cos_sim_map(x, y, m=10, *, feature_map='rbf', map_param=1.0):
     norm_x = tl.sqrt(norm_x)
     norm_y = tl.sqrt(norm_y)
     # divide rows by norm_x
-    # K = K / (norm_x @ norm_y.T)
+    K /= (norm_x @ norm_y.T)
     return K
 
 
