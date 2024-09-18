@@ -62,7 +62,7 @@ def fourier_features(x_d, m: int, map_param=1.0, Ld=1.0):
         * map_param
         * tl.exp(-((tl.pi * w.T)/(2*Ld))**2 * map_param**2 / 2)
     )
-    z_x = (1/tl.sqrt(Ld))*tl.sin(tl.pi * tl.outer(x_d, w)) * tl.sqrt(s)
+    z_x = (1/tl.sqrt(Ld))*tl.sin(tl.pi * tl.tenalg.outer([x_d, w])) * tl.sqrt(s)
     return z_x
 
 
