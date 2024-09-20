@@ -310,7 +310,7 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             raise ValueError("w_init must be a CPTensor or a list of factors")
 
         # initialize mapped features
-        if self.class_weight is None:
+        if self.class_weight is None  or self.class_weight == 'none':
             reg = 1
             G = 1
             for d in range(D - 1, -1, -1):  # D-1:-1:0
