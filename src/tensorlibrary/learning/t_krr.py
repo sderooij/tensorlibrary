@@ -50,6 +50,7 @@ class BaseTKRR(BaseEstimator, metaclass=ABCMeta):
         random_state=None,
         class_weight=None,
         max_iter=tl.inf,
+        Ld=1.0,
     ):
         self.M = M
         self.w_init = w_init
@@ -62,6 +63,8 @@ class BaseTKRR(BaseEstimator, metaclass=ABCMeta):
         self.class_weight = class_weight
         self.max_iter = max_iter
         self.mu = mu
+        self.Ld = Ld
+
 
     @abstractmethod
     def fit(self, x: tl.tensor, y: tl.tensor, **kwargs):
@@ -148,7 +151,7 @@ class TTKRR(BaseTKRR, ClassifierMixin):
                     ltr = False
                 elif d == 0:
                     ltr = True
-                z_d = features(x[:, d], m=self.M, feature_map=self.feature_map, map_param=self.map_param)
+                z_d = features(x[:, d], m=self.M, feature_map=self.feature_map, map_param=self.map_param, Ld=self.Ld)
                 # construct linear subsystem matrix
 
                 WZ = dot_kron(
@@ -206,13 +209,13 @@ class TTKRR(BaseTKRR, ClassifierMixin):
         D = x.shape[1]
         y_pred = update_wz_tt(
             self.weights_[0],
-            features(x[:, 0], m=self.M, feature_map=self.feature_map, map_param=self.map_param),
+            features(x[:, 0], m=self.M, feature_map=self.feature_map, map_param=self.map_param, Ld=self.Ld),
             None,
             mode="first")
         for d in range(1, D):
             y_pred = update_wz_tt(
                 self.weights_[d],
-                features(x[:, d], m=self.M, feature_map=self.feature_map, map_param=self.map_param),
+                features(x[:, d], m=self.M, feature_map=self.feature_map, map_param=self.map_param, Ld=self.Ld),
                 y_pred,
                 mode="left")
         return y_pred[:,0]
@@ -256,8 +259,9 @@ class CPKRR(BaseTKRR, ClassifierMixin):
         max_rank=5,
         random_state=None,
         mu=0,
-        class_weight="balanced",
+        class_weight=None,
         max_iter=tl.inf,
+        Ld=1.0,
     ):
         super().__init__(
             M=M,
@@ -271,6 +275,7 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             class_weight=class_weight,
             max_iter=max_iter,
             mu=mu,
+            Ld=Ld,
         )
 
         # self.weights_ = w_init
@@ -316,7 +321,7 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             for d in range(D - 1, -1, -1):  # D-1:-1:0
                 w_d = w[d]
                 reg *= w_d.T @ w_d
-                z_x = features(x[:, d], self.M, self.feature_map, map_param=self.map_param)
+                z_x = features(x[:, d], self.M, self.feature_map, map_param=self.map_param, Ld=self.Ld)
                 G = (z_x @ w_d) * G
             balanced = False
         elif self.class_weight == 'balanced':
@@ -334,8 +339,8 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             for d in range(D - 1, -1, -1):  # D-1:-1:0
                 w_d = w[d]
                 reg *= w_d.T @ w_d
-                z_x_n = features(x[idx_n, d], self.M, self.feature_map, map_param=self.map_param)
-                z_x_p = features(x[idx_p, d], self.M, self.feature_map, map_param=self.map_param)
+                z_x_n = features(x[idx_n, d], self.M, self.feature_map, map_param=self.map_param, Ld=self.Ld)
+                z_x_p = features(x[idx_p, d], self.M, self.feature_map, map_param=self.map_param, Ld=self.Ld)
                 Gn = (z_x_n @ w_d) * Gn
                 Gp = (z_x_p @ w_d) * Gp
             balanced = True
@@ -350,15 +355,15 @@ class CPKRR(BaseTKRR, ClassifierMixin):
 
             if not balanced:
                 z_x = features(
-                    x[:, d], self.M, feature_map=self.feature_map, map_param=self.map_param
+                    x[:, d], self.M, feature_map=self.feature_map, map_param=self.map_param, Ld=self.Ld
                 )
 
                 reg /= w[d].T @ w[d]  # remove current factor
                 G /= z_x @ w[d]  # remove current factor
                 CC, Cy = get_system_cp_krr(z_x, G, y)
             else:
-                z_x_n = features(x[idx_n, d], self.M, self.feature_map, map_param=self.map_param)
-                z_x_p = features(x[idx_p, d], self.M, self.feature_map, map_param=self.map_param)
+                z_x_n = features(x[idx_n, d], self.M, self.feature_map, map_param=self.map_param, Ld=self.Ld)
+                z_x_p = features(x[idx_p, d], self.M, self.feature_map, map_param=self.map_param, Ld=self.Ld)
                 reg /= w[d].T @ w[d]
                 Gn /= z_x_n @ w[d]
                 Gp /= z_x_p @ w[d]
@@ -399,7 +404,7 @@ class CPKRR(BaseTKRR, ClassifierMixin):
         N, D = x.shape
         y_pred = tl.ones((N, 1))
         for d in range(0, D):
-            z_x = features(x[:, d], self.M, self.feature_map, map_param=self.map_param)
+            z_x = features(x[:, d], self.M, self.feature_map, map_param=self.map_param, Ld=self.Ld)
             y_pred = y_pred * (z_x @ self.weights_[d])
         y_pred = tl.sum(y_pred, axis=1)
         return y_pred
