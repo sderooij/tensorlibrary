@@ -15,23 +15,9 @@ from tensorlibrary.learning.features import features
 from tensorlibrary.linalg.linalg import dot_r1
 
 
-# def cos_sim_feat(phi_x: list, phi_y: list) -> float:
-#     """
-#     Determine the cosine similarity between two mapped features.
-#     Args:
-#         phi_x: mapped features x, d-dimensional list (1D tensor)
-#         phi_y: mapped features y, d-dimensional list (1D tensor)
-#
-#     Returns:
-#         scalar: cosine similarity measure between the two mapped features
-#
-#     """
-#     norm_x = tl.sqrt(dot_r1(phi_x, phi_x))
-#     norm_y = tl.sqrt(dot_r1(phi_y, phi_y))
-#     return dot_r1(phi_x, phi_y) / (norm_x * norm_y)
-
 class ActiveLearner:
-    def __init__(self, data, outputs, n_samples, strategy, *, batch_size=None):
+    def __init__(self, data, outputs, n_samples, strategy, *, batch_size=None, break_at_pos=False, labels=None,
+                 min_n_samples=50, pos_only=False):
 
         self.data = data
         self.outputs = outputs
@@ -40,6 +26,7 @@ class ActiveLearner:
         self.batch_size = batch_size
         self.algorithm = None
         self.indices = None
+        self.min_n_samples = min_n_samples
         if self.strategy == 'uncertainty':
             self.algorithm = uncertainty_strategy
         elif self.strategy == 'combined':
@@ -48,6 +35,13 @@ class ActiveLearner:
             self.algorithm = diversity_strategy
         else:
             raise ValueError("Invalid strategy")
+
+        if break_at_pos:
+            self.labels = labels
+            self.break_at_pos = break_at_pos
+        else:
+            self.labels = None
+            self.break_at_pos = False
 
     def select_samples(self, **kwargs):
         """
@@ -72,23 +66,39 @@ class ActiveLearner:
             (indices, selected_samples): indices of the most uncertain samples and the selected samples
         """
         if self.batch_size is None:
-            self.indices = self.algorithm(self.data, self.outputs, self.n_samples, **kwargs)
+            self.indices = self.algorithm(self.data, self.outputs, self.n_samples, break_at_pos=self.break_at_pos, labels=self.labels, min_n_samples=self.min_n_samples,**kwargs)
+
         else:
             total_samples = len(self.outputs)
             n_batches = total_samples // self.batch_size
             n_samples_per_batch = self.n_samples // n_batches
             n_samples_last_batch = self.n_samples - n_samples_per_batch * (n_batches - 1)
-            indices = []
+            indices = np.arange(0, total_samples)
+            indices_select = []
             for k in range(n_batches):
                 idx_start = k * self.batch_size
                 if k == n_batches - 1: # last batch
-                    indices.append(self.algorithm(self.data[idx_start:, :], self.outputs, n_samples_last_batch, **kwargs))
+                    cur_indices = indices[idx_start:]
+                    sel_indices = self.algorithm(self.data[idx_start:, :], self.outputs[idx_start:],
+                                                 n_samples_per_batch,
+                                                 break_at_pos=self.break_at_pos, labels=self.labels,
+                                                 min_n_samples=self.min_n_samples, **kwargs)
+                    indices_select.append(sel_indices)
                 else:
                     idx_end = (k + 1) * self.batch_size
-                    indices.append(self.algorithm(self.data[idx_start:idx_end, :], self.outputs, n_samples_per_batch,
-                                                  **kwargs))
+                    cur_indices = indices[idx_start:idx_end]
+                    sel_indices = self.algorithm(self.data[idx_start:idx_end, :], self.outputs[idx_start:idx_end],
+                                                 n_samples_per_batch,
+                                                  break_at_pos=self.break_at_pos, labels=self.labels, min_n_samples=self.min_n_samples, **kwargs)
 
-            self.indices = tl.concatenate(indices)
+                indices_select.append(cur_indices[sel_indices])
+
+                if self.break_at_pos:
+                    # check where indices are positive
+                    if np.any(self.labels[indices_select[-1]] == 1) and len(indices_select[-1]) > self.min_n_samples:
+                        break
+
+            self.indices = tl.concatenate(indices_select)
 
         return self.indices, self.data[self.indices]
 
@@ -123,7 +133,7 @@ def cos_sim_map(x, y, m=10, *, feature_map='rbf', map_param=1., Ld=1.):
     return K
 
 
-def uncertainty_strategy(outputs, n_samples=-1, thresh=-1):
+def uncertainty_strategy(outputs, n_samples=-1, thresh=-1, *, break_at_pos=False, labels=None):
     """
     Perform uncertainty sampling to select the most uncertain samples.
     Either select the n_samples most uncertain samples or select samples below a certain threshold.
@@ -143,11 +153,18 @@ def uncertainty_strategy(outputs, n_samples=-1, thresh=-1):
         indices = tl.argsort(outputs, axis=0)[:n_samples]
     else:
         indices = tl.where(tl.abs(outputs) < thresh)
+
+    if break_at_pos:
+        # check where indices are positive
+        ind_pos = indices[labels[indices] == 1]
+        if len(ind_pos) > 0:
+            indices = indices[:ind_pos[0]]
+
     return indices
 
 
 def combined_strategy(x_feat, outputs, max_samples, l=0.5, m=10, sim_measure='cos', feature_map='rbf', map_param=1.0, \
-    approx=False, min_div_max=0.):
+    approx=False, min_div_max=0., break_at_pos=False, labels=None, min_n_samples=50):
     """
     Perform combined strategy for active learning.
     Args:
@@ -176,6 +193,7 @@ def combined_strategy(x_feat, outputs, max_samples, l=0.5, m=10, sim_measure='co
     outputs[indices[0]] = 1e10  # set high to avoid re-selection and to keep the indices
     # compute similarity measure to the first sample
     sim = tl.zeros((x_feat.shape[0], max_samples-1))
+    breaktime = False
 
     for k in range(0, max_samples-1):
         # calculate the similarity measure for the k-th sample to add to similarity matrix (kernel matrix)
@@ -196,13 +214,20 @@ def combined_strategy(x_feat, outputs, max_samples, l=0.5, m=10, sim_measure='co
             break
 
         indices[k+1] = tl.argmin(l*outputs + (1-l)*sim_max)
+        if break_at_pos:
+            if tl.any(labels[indices[k]] == 1):
+                breaktime = True
+            if breaktime and k >= min_n_samples-1:
+                indices = indices[:k + 2]
+                break
+
         outputs[indices[k+1]] = 1e10 # set high to avoid re-selection
 
     return indices
 
 
 def diversity_strategy(x_feat, max_samples, sim_measure='cos', feature_map='rbf', map_param=1.0, m=10, \
-    approx=False, min_div_max=0.):
+    approx=False, min_div_max=0., break_at_pos=False, labels=None, min_n_samples=50):
     """
     Perform combined strategy for active learning.
     Args:
@@ -224,6 +249,7 @@ def diversity_strategy(x_feat, max_samples, sim_measure='cos', feature_map='rbf'
     indices[0] = random.randint(0, x_feat.shape[0])
     # compute diversity measure to the first sample
     sim = np.zeros((x_feat.shape[0], max_samples-1))
+    breaktime = False
 
     for k in range(0, max_samples-1):
         if not approx:
@@ -242,6 +268,12 @@ def diversity_strategy(x_feat, max_samples, sim_measure='cos', feature_map='rbf'
             break
 
         indices[k+1] = np.argmin(sim_max)
+        if break_at_pos:
+            if tl.any(labels[indices[k]] == 1):
+                breaktime = True
+            if breaktime and sum(indices > 0) > min_n_samples:
+                indices = indices[:k + 2]
+                break
 
     return indices
 
