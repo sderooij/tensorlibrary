@@ -27,6 +27,7 @@ class ActiveLearner:
         self.algorithm = None
         self.indices = None
         self.min_n_samples = min_n_samples
+        self.pos_only = pos_only
         if self.strategy == 'uncertainty':
             self.algorithm = uncertainty_strategy
         elif self.strategy == 'combined':
@@ -63,8 +64,14 @@ class ActiveLearner:
                 m: number of basis functions or order of polynomial
 
         Returns:
-            (indices, selected_samples): indices of the most uncertain samples and the selected samples
+            indices: indices of the most uncertain samples
         """
+        if self.pos_only:
+            pos_indices = np.where(self.outputs > 0)[0]
+            self.data = self.data[pos_indices]
+            self.outputs = self.outputs[pos_indices]
+            self.labels = self.labels[pos_indices]
+
         if self.batch_size is None:
             self.indices = self.algorithm(self.data, self.outputs, self.n_samples, break_at_pos=self.break_at_pos, labels=self.labels, min_n_samples=self.min_n_samples,**kwargs)
 
@@ -100,7 +107,10 @@ class ActiveLearner:
 
             self.indices = tl.concatenate(indices_select)
 
-        return self.indices, self.data[self.indices]
+        if self.pos_only:
+            self.indices = pos_indices[self.indices]
+
+        return self.indices
 
 
 def cos_sim_map(x, y, m=10, *, feature_map='rbf', map_param=1., Ld=1.):
