@@ -8,7 +8,7 @@ def features(x_d, m: int, feature_map="rbf", *, map_param=1.0, Ld=1.0, old_versi
         x_d: d-th feature N x 1 array (N=datapoints, 1=feature dimension)
         m: number of basis functions or order of polynomial
         feature_map: kernel type rbf (via deterministic fourier), poly or chebishev
-        map_param: parameters of the kernel function. lengthscale for rbf
+        map_param: al_parameters of the kernel function. lengthscale for rbf
         Ld: domain of the input data (default 1) for rbf [-Ld, Ld]
 
     Returns:
@@ -74,7 +74,7 @@ def kernel_mat_features(x, y, m=10, feature_map='rbf', *, map_param=1., Ld=1.):
         y: matrix of size N_y x D, containing N_y samples (can be the same as x, for the kernel matrix)
         m: number of frequency or basis functions for the feature map, degree of polynomial. Default 10
         feature_map: kernel type rbf (via deterministic fourier), poly. Default rbf
-        map_param: parameters of the kernel function. lengthscale for rbf, none for poly. Default 1.
+        map_param: al_parameters of the kernel function. lengthscale for rbf, none for poly. Default 1.
         Ld: domain of the input data (default 1) for rbf [-Ld, Ld]. Default 1.
 
     Returns:

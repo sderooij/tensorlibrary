@@ -64,10 +64,11 @@ w = list(w[0])
 # wz_left, wz_right = tl_learn.initialize_wz(w, X_train, M=3, feature_map="rbf", map_param=0.1, k_core=0)
 from tensorlibrary.learning.t_krr import TTKRR
 
-ttkrr = TTKRR(max_rank=30, M=3,feature_map="rbf", map_param=0.1, reg_par=1e-10, num_sweeps=5)
+# ttkrr = TTKRR(max_rank=30, M=3,feature_map="rbf", map_param=0.1, reg_par=1e-10, num_sweeps=5)
+#
+# ttkrr = ttkrr.fit(X_train, y_train)
+#
+# #%% test
+# yhat = ttkrr.predict(X_test)
 
-ttkrr = ttkrr.fit(X_train, y_train)
-
-#%% test
-yhat = ttkrr.predict(X_test)
 print(np.mean(yhat == y_test))

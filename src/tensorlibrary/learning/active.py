@@ -5,7 +5,10 @@ Active Learning with tensor kernel machines
 # library imports
 import tensorly as tl
 from sklearn.metrics.pairwise import rbf_kernel
+from sklearn.base import BaseEstimator, ClassifierMixin, clone
+from sklearn.pipeline import Pipeline
 import random
+from functools import partial
 
 from numba import njit
 import numpy as np
@@ -15,8 +18,165 @@ from tensorlibrary.learning.features import features
 from tensorlibrary.linalg.linalg import dot_r1
 
 
+class ActiveLearnClassifier(BaseEstimator, ClassifierMixin):
+    def __init__(self, init_model, n_samples, strategy, batch_size=2048, break_at_pos=False, min_n_samples=0,
+                 similarity='rbf', pos_only=False, al_parameters={}, model_type="SVC", model_params={}):
+
+        self.init_model =init_model
+        self.n_samples = n_samples
+        self.strategy = strategy
+        self.batch_size = batch_size
+        self.break_at_pos = break_at_pos
+        self.min_n_samples = min_n_samples
+        self.pos_only = pos_only
+        self.al_parameters = al_parameters
+        self.model_parameters = model_params
+        self.labeling_count = 0
+        self.similarity = similarity
+        self.model_type = model_type
+        self.X = None
+        self.y = None
+        self.train_indices = None
+        if self.strategy == 'uncertainty':
+            self.al_parameters['l'] = 1
+            self.algorithm = partial(combined_strategy, **self.al_parameters)
+        elif self.strategy == 'combined':
+            self.algorithm = partial(combined_strategy, **self.al_parameters)
+        else:
+            raise ValueError("Invalid strategy")
+
+        self.model = None
+        self._initiate_model()
+
+    @property
+    def test_indices(self):
+        return np.setdiff1d(np.arange(len(self.y)), self.train_indices)
+
+    def _initiate_model(self):
+        self.model = clone(self.init_model)
+        if isinstance(self.init_model, BaseEstimator):
+            if self.model_type == "CPKRR":
+                self.model_parameters['w_init'] = self.init_model.weights_
+            self.model.set_params(**self.model_parameters)
+        elif isinstance(self.init_model, Pipeline):
+            self.model_parameters['w_init'] = self.init_model['clf'].weights_
+            self.model['clf'].set_params(**self.model_parameters)
+
+        return self
+
+    def select_samples(self, X, model_outputs, y=None):
+        """
+                Select the most informative samples. If batch_size is set, select samples in batches.
+
+                Args:
+                    X: input X
+                    model_outputs: model outputs
+                    y: correct labels, can only be None if break_at_pos is False
+
+                Returns:
+                    indices: indices of the most uncertain samples
+                """
+        self.X = X
+        self.y = y
+
+        if self.pos_only:
+            pos_indices = np.where(model_outputs > 0)[0]
+            X = X[pos_indices]
+            model_outputs = model_outputs[pos_indices]
+            y = y[pos_indices]
+
+        if self.batch_size is None:
+            self.train_indices = self.algorithm(X, model_outputs, self.n_samples, break_at_pos=self.break_at_pos,
+                                          labels=y, min_n_samples=self.min_n_samples)
+        else:
+            total_samples = len(model_outputs)
+            indices = np.arange(0, total_samples)
+            batch_indices = [indices[i:i + self.batch_size] for i in range(0, total_samples, self.batch_size)]
+            n_batches = len(batch_indices)
+            n_samples_per_batch = np.ceil(self.n_samples / n_batches)
+            # n_samples_last_batch = np.min(len(batch_indices[-1]), self.n_samples - n_samples_per_batch * (n_batches -
+            #                                                                                               1))
+            indices_select = np.array([])
+            min_selected_flag = False
+            total_selected = 0
+            for k, idx in enumerate(batch_indices):
+                al_indices_batch = self.algorithm(X[idx, :], model_outputs[idx],
+                                                  n_samples_per_batch,
+                                                  break_at_pos=self.break_at_pos, labels=y[idx],
+                                                  min_n_samples=self.min_n_samples * (1 - min_selected_flag),
+                                                  prev_batch=self.X[indices_select, :])
+
+                indices_select = np.append(indices_select, idx[al_indices_batch])
+                total_selected += len(al_indices_batch)
+                if not min_selected_flag:
+                    min_selected_flag = total_selected >= self.min_n_samples
+                if self.break_at_pos:
+                    if np.any(y[indices_select] == 1) and min_selected_flag:
+                        break
+                if total_selected >= self.n_samples:
+                    break
+
+            self.train_indices = tl.concatenate(indices_select)
+
+        if self.pos_only:
+            self.train_indices = pos_indices[self.indices]
+
+        self.labeling_count = len(self.train_indices)
+        return self
+    def fit(self, X, y):
+        """
+        Fit the model with the selected samples.
+        Args:
+            X:
+            y:
+
+        Returns:
+            fitted model
+        """
+
+        # if model_outputs is None:
+        #     model_outputs = self.init_model.decision_function(X)
+        # self.select_samples(X, model_outputs, y)
+        # self.labeling_count += len(self.train_indices)
+
+        # retrain
+        self.model.fit(X, y)
+
+        return self
+
+    def predict(self, X):
+        return self.model.predict(X)
+
+    def decision_function(self, X):
+        return self.model.decision_function(X)
+
+
+def _compute_similarity(self, x, y, **kwargs):
+    """
+    Compute the similarity between the samples x and y.
+    Args:
+        x: matrix of N_x x D samples
+        y: matrix of N_y x D samples, where N_y is usually 1
+        **kwargs: additional arguments for the similarity measure. For cosine similarity of feature-maps,
+        the following are
+        required: m: number of basis functions or order of polynomial, feature_map: feature map to use,
+        map_param: parameter for the feature map (or kernel function), Ld: interval
+        for rbf kernel, gamma: kernel parameter
+
+
+    Returns:
+        similarity: similarity matrix of N_x x N_y
+
+    """
+    if self.similarity == 'rbf':
+        return rbf_kernel(x, y, **kwargs)
+    elif self.similarity == 'cos_feat_map':
+        return cos_sim_map(x, y, **kwargs)
+
+
 class ActiveLearner:
-    def __init__(self, data, outputs, n_samples, strategy, *, batch_size=None, break_at_pos=False, labels=None,
+    def __init__(self, data, outputs, n_samples, strategy, *, parameters={}, batch_size=None, break_at_pos=False,
+                 labels=None,
                  min_n_samples=50, pos_only=False):
 
         self.data = data
@@ -28,21 +188,17 @@ class ActiveLearner:
         self.indices = None
         self.min_n_samples = min_n_samples
         self.pos_only = pos_only
+        self.parameters = parameters
         if self.strategy == 'uncertainty':
-            self.algorithm = uncertainty_strategy
+            self.parameters['l'] = 1
+            self.algorithm = partial(combined_strategy, **self.parameters)
         elif self.strategy == 'combined':
-            self.algorithm = combined_strategy
-        elif self.strategy == 'diversity':
-            self.algorithm = diversity_strategy
+            self.algorithm = partial(combined_strategy, **self.parameters)
         else:
             raise ValueError("Invalid strategy")
 
-        if break_at_pos:
-            self.labels = labels
-            self.break_at_pos = break_at_pos
-        else:
-            self.labels = None
-            self.break_at_pos = False
+        self.labels = labels
+        self.break_at_pos = break_at_pos
 
     def select_samples(self, **kwargs):
         """
@@ -56,7 +212,7 @@ class ActiveLearner:
                 feature_map: feature map to use, default is rbf kernel: 'rbf'
 
             For diversity strategy, the following are required:
-                x_feat: features of the data
+                x_feat: features of the X
                 max_samples: maximum number of samples to select for the batch
                 sim_measure: similarity measure, default is cosine similarity: 'cos'
                 feature_map: feature map to use, default is rbf kernel: 'rbf'
@@ -73,40 +229,64 @@ class ActiveLearner:
             self.labels = self.labels[pos_indices]
 
         if self.batch_size is None:
-            self.indices = self.algorithm(self.data, self.outputs, self.n_samples, break_at_pos=self.break_at_pos, labels=self.labels, min_n_samples=self.min_n_samples,**kwargs)
+            self.indices = self.algorithm(self.data, self.outputs, self.n_samples, break_at_pos=self.break_at_pos,
+                                          labels=self.labels, min_n_samples=self.min_n_samples, **kwargs)
 
         else:
             total_samples = len(self.outputs)
-            n_batches = total_samples // self.batch_size
-            n_samples_per_batch = self.n_samples // n_batches
-            n_samples_last_batch = self.n_samples - n_samples_per_batch * (n_batches - 1)
+            # n_batches = total_samples // self.batch_size
+            # n_samples_per_batch = self.n_samples // n_batches
+            # n_samples_last_batch = self.n_samples - n_samples_per_batch * (n_batches - 1)
             indices = np.arange(0, total_samples)
-            indices_select = []
+            batch_indices = [indices[i:i + self.batch_size] for i in range(0, total_samples, self.batch_size)]
+            n_batches = len(batch_indices)
+            n_samples_per_batch = np.ceil(self.n_samples / n_batches)
+            # n_samples_last_batch = np.min(len(batch_indices[-1]), self.n_samples - n_samples_per_batch * (n_batches -
+            #                                                                                               1))
+            indices_select = np.array([])
             min_selected_flag = False
-            for k in range(n_batches):
-                idx_start = k * self.batch_size
-                if k == n_batches - 1: # last batch
-                    cur_indices = indices[idx_start:]
-                    sel_indices = self.algorithm(self.data[idx_start:, :], self.outputs[idx_start:],
-                                                 n_samples_last_batch,
-                                                 break_at_pos=self.break_at_pos, labels=self.labels[idx_start:],
-                                                 min_n_samples=self.min_n_samples*(1-min_selected_flag), **kwargs)
+            total_selected = 0
+            for k, idx in enumerate(batch_indices):
+                al_indices_batch = self.algorithm(self.data[idx, :], self.outputs[idx],
+                                                  n_samples_per_batch,
+                                                  break_at_pos=self.break_at_pos, labels=self.labels[idx],
+                                                  min_n_samples=self.min_n_samples * (1 - min_selected_flag),
+                                                  prev_batch=self.data[indices_select, :], **kwargs)
 
-                else:
-                    idx_end = (k + 1) * self.batch_size
-                    cur_indices = indices[idx_start:idx_end]
-                    sel_indices = self.algorithm(self.data[idx_start:idx_end, :], self.outputs[idx_start:idx_end],
-                                                 n_samples_per_batch,
-                                                  break_at_pos=self.break_at_pos, labels=self.labels[idx_start:idx_end],
-                                                 min_n_samples=self.min_n_samples*(1-min_selected_flag), **kwargs)
-
-                indices_select.append(cur_indices[sel_indices])
+                indices_select = np.append(indices_select, idx[al_indices_batch])
+                total_selected += len(al_indices_batch)
                 if not min_selected_flag:
-                    min_selected_flag = sum(len(arr) for arr in indices_select) > self.min_n_samples
+                    min_selected_flag = total_selected >= self.min_n_samples
                 if self.break_at_pos:
-                    # check where indices are positive
-                    if np.any(self.labels[indices_select[-1]] == 1) and min_selected_flag:
+                    if np.any(self.labels[indices_select] == 1) and min_selected_flag:
                         break
+                if total_selected >= self.n_samples:
+                    break
+
+            # for k in range(n_batches):
+            #     idx_start = k * self.batch_size
+            #     if k == n_batches - 1: # last batch
+            #         cur_indices = indices[idx_start:]
+            #         sel_indices = self.algorithm(self.X[idx_start:, :], self.outputs[idx_start:],
+            #                                      n_samples_last_batch,
+            #                                      break_at_pos=self.break_at_pos, labels=self.labels[idx_start:],
+            #                                      min_n_samples=self.min_n_samples*(1-min_selected_flag), **kwargs)
+            #
+            #     else:
+            #         idx_end = (k + 1) * self.batch_size
+            #         cur_indices = indices[idx_start:idx_end]
+            #         sel_indices = self.algorithm(self.X[idx_start:idx_end, :], self.outputs[idx_start:idx_end],
+            #                                      n_samples_per_batch,
+            #                                       break_at_pos=self.break_at_pos, labels=self.labels[idx_start:idx_end],
+            #                                      min_n_samples=self.min_n_samples*(1-min_selected_flag), **kwargs)
+            #
+            #     indices_select.append(cur_indices[sel_indices])
+            #     if not min_selected_flag:
+            #         min_selected_flag = sum(len(arr) for arr in indices_select) > self.min_n_samples
+            #     if self.break_at_pos:
+            #         # check where indices are positive
+            #         if np.any(self.labels[indices_select[-1]] == 1) and min_selected_flag:
+            #             break
 
             self.indices = tl.concatenate(indices_select)
 
@@ -125,7 +305,7 @@ def cos_sim_map(x, y, m=10, *, feature_map='rbf', map_param=1., Ld=1.):
     D = x.shape[1]
     N_x = x.shape[0]
     N_y = y.shape[0]
-    K = tl.ones((N_x, N_y)) # initialize "kernel" matrix Phi^T Phi
+    K = tl.ones((N_x, N_y))  # initialize "kernel" matrix Phi^T Phi
 
     norm_x = tl.ones((N_x, 1))
     norm_y = tl.ones((N_y, 1))
@@ -163,7 +343,7 @@ def uncertainty_strategy(outputs, n_samples=-1, thresh=-1, *, break_at_pos=False
     elif n_samples != -1 and thresh != -1:
         raise ValueError("Only one of n_samples or thresh must be set")
     elif n_samples != -1:
-        indices = tl.argsort(outputs, axis=0)[:n_samples]
+        indices = tl.argsort(tl.abs(outputs), axis=0)[:n_samples]
     else:
         indices = tl.where(tl.abs(outputs) < thresh)
 
@@ -177,11 +357,11 @@ def uncertainty_strategy(outputs, n_samples=-1, thresh=-1, *, break_at_pos=False
 
 
 def combined_strategy(x_feat, outputs, max_samples, l=0.5, m=10, sim_measure='cos', feature_map='rbf', map_param=1.0, \
-                      approx=False, max_min_sim=1., break_at_pos=False, labels=None, min_n_samples=50):
+                      approx=False, max_min_sim=1., break_at_pos=False, labels=None, min_n_samples=50, prev_batch=None):
     """
     Perform combined strategy for active learning.
     Args:
-        x_feat: features of the data
+        x_feat: features of the X
         outputs: model outputs
         max_samples: maximum number of samples to select for the batch
         l: trade-off parameter between uncertainty and diversity (0.5 by default)
@@ -194,26 +374,40 @@ def combined_strategy(x_feat, outputs, max_samples, l=0.5, m=10, sim_measure='co
     Returns:
         indices: indices of the most uncertain samples
     """
+    if l == 1:
+        indices = uncertainty_strategy(outputs, n_samples=max_samples, break_at_pos=break_at_pos, labels=labels)
+        return indices
     outputs = tl.abs(outputs)
-    # initialize indices
-    indices = tl.zeros(max_samples, dtype=int)
+    if prev_batch is not None:
+        len_batch = prev_batch.shape[0]
+        max_samples = len_batch + max_samples
+        x_feat = np.concatenate([prev_batch, x_feat], axis=0)
+        indices = tl.zeros(max_samples, dtype=int)
+        indices[:len_batch] = np.arange(len_batch)
+        kstart = len_batch
+        outputs = np.concatenate([np.ones(len_batch)*1e10, outputs])
+    else:
+        # initialize indices
+        indices = tl.zeros(max_samples, dtype=int) # set high to avoid re-selection and to keep the indices
+        # compute similarity measure to the first sample
+        kstart = 0
+
+    sim = tl.zeros((x_feat.shape[0], max_samples - 1))
     # select first sample as most uncertain (closest to boundary)
     if l != 0:
-        indices[0] = tl.argmin(outputs)
-    else: # choose at random
-        indices[0] = random.randint(0, x_feat.shape[0])
+        indices[kstart] = tl.argmin(outputs)
+    else:  # choose at random
+        indices[kstart] = random.randint(0, x_feat.shape[0])
 
-    outputs[indices[0]] = 1e10  # set high to avoid re-selection and to keep the indices
-    # compute similarity measure to the first sample
-    sim = tl.zeros((x_feat.shape[0], max_samples-1))
+    outputs[indices[kstart]] = 1e10
     breaktime = False
 
-    for k in range(0, max_samples-1):
+    for k in range(kstart, max_samples - 1):
         # calculate the similarity measure for the k-th sample to add to similarity matrix (kernel matrix)
         if not approx:
-            if feature_map == 'rbf' and sim_measure == 'cos':
+            if feature_map == 'rbf':
                 sim[:, k] = (rbf_kernel(x_feat, x_feat[indices[k], :].reshape(1, -1), gamma=map_param)).reshape(-1)
-            else: # TODO: use the feature map function.
+            else:
                 raise NotImplementedError
         else:
             sim[:, k] = cos_sim_map(x_feat, x_feat[indices[k], :].reshape(1, -1), m=m, feature_map=feature_map,
@@ -222,76 +416,76 @@ def combined_strategy(x_feat, outputs, max_samples, l=0.5, m=10, sim_measure='co
         # div[indices[k], k] = 0  # for max to work
         # take max over the columns o
         sim_max = tl.max(sim, axis=1)  # results in N_feats x 1
-        if tl.min(np.delete(sim_max, indices[:k+1])) > max_min_sim:
-            indices = indices[:k+1]
+        if tl.min(np.delete(sim_max, indices[:k + 1])) > max_min_sim:
+            indices = indices[:k + 1]
             break
 
-        indices[k+1] = tl.argmin(l*outputs + (1-l)*sim_max)
+        indices[k + 1] = tl.argmin(l * outputs + (1 - l) * sim_max)
         if break_at_pos:
-            if tl.any(labels[indices[:k+2]] == 1):
+            if tl.any(labels[indices[:k + 2]] == 1):
                 breaktime = True
-            if breaktime and k >= min_n_samples-1:
+            if breaktime and k >= min_n_samples - 1:
                 indices = indices[:k + 2]
                 break
 
-        outputs[indices[k+1]] = 1e10 # set high to avoid re-selection
+        outputs[indices[k + 1]] = 1e10  # set high to avoid re-selection
 
     return indices
 
 
-def diversity_strategy(x_feat, max_samples, sim_measure='cos', feature_map='rbf', map_param=1.0, m=10, \
-    approx=False, min_div_max=0., break_at_pos=False, labels=None, min_n_samples=50):
-    """
-    Perform combined strategy for active learning.
-    Args:
-        x_feat: features of the data
-        outputs: model outputs
-        max_samples: maximum number of samples to select for the batch
-        l: trade-off parameter between uncertainty and diversity (0.5 by default)
-        sim_measure: similarity measure, default is cosine similarity: 'cos'
-        feature_map: feature map to use, default is rbf kernel: 'rbf'
-        map_param: parameter for the feature map (or kernel function), default is 1.0
-        approx: whether to use the approximate feature map instead of kernel function
-        min_div_max: minimum value the maximum diversity measure, break if all values are below this threshold
+# def diversity_strategy(x_feat, max_samples, sim_measure='cos', feature_map='rbf', map_param=1.0, m=10, \
+#     approx=False, min_div_max=0., break_at_pos=False, labels=None, min_n_samples=50):
+#     """
+#     Perform combined strategy for active learning.
+#     Args:
+#         x_feat: features of the X
+#         outputs: model outputs
+#         max_samples: maximum number of samples to select for the batch
+#         l: trade-off parameter between uncertainty and diversity (0.5 by default)
+#         sim_measure: similarity measure, default is cosine similarity: 'cos'
+#         feature_map: feature map to use, default is rbf kernel: 'rbf'
+#         map_param: parameter for the feature map (or kernel function), default is 1.0
+#         approx: whether to use the approximate feature map instead of kernel function
+#         min_div_max: minimum value the maximum diversity measure, break if all values are below this threshold
+#
+#     Returns:
+#         indices: indices of the most uncertain samples
+#     """
+#     # initialize indices
+#     indices = np.zeros(max_samples, dtype=np.int32)
+#     indices[0] = random.randint(0, x_feat.shape[0])
+#     # compute diversity measure to the first sample
+#     sim = np.zeros((x_feat.shape[0], max_samples-1))
+#     breaktime = False
+#
+#     for k in range(0, max_samples-1):
+#         if not approx:
+#             if feature_map == 'rbf' and sim_measure == 'cos': # cosine similarity for rbf kernel is the same as rbf kernel
+#                 # sim[:, k] = (rbf_kernel(x_feat, x_feat[indices[k], :].reshape(1, -1), gamma=map_param)).reshape(-1)
+#                 sim[:,k] = rbf(x_feat, x_feat[indices[k], :], map_param)
+#             else:
+#                 raise NotImplementedError
+#         else:
+#             sim[:, k] = cos_sim_map(x_feat, x_feat[indices[k], :].reshape(1, -1), m=m, feature_map=feature_map,
+#                                     map_param=map_param).reshape(-1)
+#         # take max over the columns
+#         sim_max = np.max(sim, axis=1)  # results in N_feats x 1
+#         if np.all(sim_max[~indices[k]] < min_div_max):
+#             indices = indices[:k]
+#             break
+#
+#         indices[k+1] = np.argmin(sim_max)
+#         if break_at_pos:
+#             if tl.any(labels[indices[k]] == 1):
+#                 breaktime = True
+#             if breaktime and sum(indices > 0) > min_n_samples:
+#                 indices = indices[:k + 2]
+#                 break
+#
+#     return indices
 
-    Returns:
-        indices: indices of the most uncertain samples
-    """
-    # initialize indices
-    indices = np.zeros(max_samples, dtype=np.int32)
-    indices[0] = random.randint(0, x_feat.shape[0])
-    # compute diversity measure to the first sample
-    sim = np.zeros((x_feat.shape[0], max_samples-1))
-    breaktime = False
 
-    for k in range(0, max_samples-1):
-        if not approx:
-            if feature_map == 'rbf' and sim_measure == 'cos': # cosine similarity for rbf kernel is the same as rbf kernel
-                # sim[:, k] = (rbf_kernel(x_feat, x_feat[indices[k], :].reshape(1, -1), gamma=map_param)).reshape(-1)
-                sim[:,k] = rbf(x_feat, x_feat[indices[k], :], map_param)
-            else:
-                raise NotImplementedError
-        else:
-            sim[:, k] = cos_sim_map(x_feat, x_feat[indices[k], :].reshape(1, -1), m=m, feature_map=feature_map,
-                                    map_param=map_param).reshape(-1)
-        # take max over the columns
-        sim_max = np.max(sim, axis=1)  # results in N_feats x 1
-        if np.all(sim_max[~indices[k]] < min_div_max):
-            indices = indices[:k]
-            break
-
-        indices[k+1] = np.argmin(sim_max)
-        if break_at_pos:
-            if tl.any(labels[indices[k]] == 1):
-                breaktime = True
-            if breaktime and sum(indices > 0) > min_n_samples:
-                indices = indices[:k + 2]
-                break
-
-    return indices
-
-
-def rbf(x,y, sigma):
+def rbf(x, y, sigma):
     """
     Compute the RBF kernel function.
     Args:
@@ -302,4 +496,4 @@ def rbf(x,y, sigma):
     Returns:
         scalar: kernel function value
     """
-    return np.exp(-0.5*np.linalg.norm(x - y, axis=1, ord=2)**2 / sigma**2)
+    return np.exp(-0.5 * np.linalg.norm(x - y, axis=1, ord=2) ** 2 / sigma ** 2)

@@ -74,7 +74,7 @@ cpkrr = CPKRR(
     max_rank=30,
 )
 # model = GridSearchCV(
-#     cpkrr, parameters, cv=5, n_jobs=1, verbose=1, scoring=make_scorer(accuracy_score)
+#     cpkrr, al_parameters, cv=5, n_jobs=1, verbose=1, scoring=make_scorer(accuracy_score)
 # )
 model = cpkrr
 # %% Train

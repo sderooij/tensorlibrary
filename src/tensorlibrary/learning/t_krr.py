@@ -5,6 +5,7 @@ import tensorly as tl
 from typing import Any, List, Optional, Text, Type, Union, Dict, Sequence
 import numpy as np
 from sklearn.base import BaseEstimator, ClassifierMixin
+from functools import partial
 
 # from sklearn.utils import check_X_y, check_array
 # from sklearn.utils.validation import check_is_fitted
@@ -16,12 +17,13 @@ from sklearn.utils.validation import (
     check_X_y,
 )
 from numbers import Real
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, hinge_loss
 
 # from tensorly import tensor
 
 
-from ._cp_krr import get_system_cp_krr
+from ._cp_krr import get_system_cp_krr, CPKM_predict
+from ._cp_km import init_CP, _solve_TSVM_square_hinge
 from .tt_krr import get_tt_rank, update_wz_tt, initialize_wz
 from .features import features
 from ..random import tt_random
@@ -51,6 +53,9 @@ class BaseTKRR(BaseEstimator, metaclass=ABCMeta):
         class_weight=None,
         max_iter=tl.inf,
         Ld=1.0,
+        train_loss_flag=False,
+        loss='l2',
+        penalty='l2'
     ):
         self.M = M
         self.w_init = w_init
@@ -64,7 +69,11 @@ class BaseTKRR(BaseEstimator, metaclass=ABCMeta):
         self.max_iter = max_iter
         self.mu = mu
         self.Ld = Ld
-
+        self.train_loss_flag = train_loss_flag,
+        self.train_loss = []
+        self._features = partial(features, m=self.M, feature_map=self.feature_map, Ld=self.Ld, map_param=self.map_param)
+        self.loss = loss
+        self.penalty = penalty
 
     @abstractmethod
     def fit(self, x: tl.tensor, y: tl.tensor, **kwargs):
@@ -262,6 +271,7 @@ class CPKRR(BaseTKRR, ClassifierMixin):
         class_weight=None,
         max_iter=tl.inf,
         Ld=1.0,
+        train_loss_flag=False
     ):
         super().__init__(
             M=M,
@@ -276,6 +286,7 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             max_iter=max_iter,
             mu=mu,
             Ld=Ld,
+            train_loss_flag=train_loss_flag,
         )
 
         # self.weights_ = w_init
@@ -294,34 +305,16 @@ class CPKRR(BaseTKRR, ClassifierMixin):
         x, y = check_X_y(x, y, y_numeric=True, multi_output=False)
         N, D = x.shape
         # initialize factors
-        if self.w_init is None:
-            temp = tl.random.random_cp(
-                shape=tuple(int(self.M) * tl.ones(D, dtype=int)),
-                rank=self.max_rank,
-                full=False,
-                orthogonal=False,
-                random_state=self.random_state,
-                normalise_factors=True,
-            )
-            self.w_init = temp.factors
-            w = self.w_init
-        elif isinstance(self.w_init, list):
-            w = self.w_init
-            for d in range(D):
-                w[d] /= tl.norm(w[d], order=2, axis=0)
-        elif isinstance(self.w_init, tl.cp_tensor.CPTensor):
-            w = self.w_init.factors
-        else:
-            raise ValueError("w_init must be a CPTensor or a list of factors")
+        w = init_CP(self.w_init, self.M, D, self.max_rank, random_state=rnd)
 
         # initialize mapped features
-        if self.class_weight is None  or self.class_weight == 'none':
+        if self.class_weight is None or self.class_weight == 'none':
             reg = 1
             G = 1
             for d in range(D - 1, -1, -1):  # D-1:-1:0
                 w_d = w[d]
                 reg *= w_d.T @ w_d
-                z_x = features(x[:, d], self.M, self.feature_map, map_param=self.map_param, Ld=self.Ld)
+                z_x = self._features(x[:, d])
                 G = (z_x @ w_d) * G
             balanced = False
         elif self.class_weight == 'balanced':
@@ -339,8 +332,8 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             for d in range(D - 1, -1, -1):  # D-1:-1:0
                 w_d = w[d]
                 reg *= w_d.T @ w_d
-                z_x_n = features(x[idx_n, d], self.M, self.feature_map, map_param=self.map_param, Ld=self.Ld)
-                z_x_p = features(x[idx_p, d], self.M, self.feature_map, map_param=self.map_param, Ld=self.Ld)
+                z_x_n = self._features(x[idx_n, d])
+                z_x_p = self._features(x[idx_p, d])
                 Gn = (z_x_n @ w_d) * Gn
                 Gp = (z_x_p @ w_d) * Gp
             balanced = True
@@ -348,22 +341,23 @@ class CPKRR(BaseTKRR, ClassifierMixin):
         if self._extra_reg:
             extra_reg = reg
 
+        if self.train_loss_flag:
+            self.train_loss.append(1-accuracy_score(y, tl.sign(CPKM_predict(x, w, self._features))))
+
         # ALS sweeps
         itemax = int(tl.min([self.num_sweeps * D, self.max_iter]))
         for it in range(itemax):
             d = it % D
 
             if not balanced:
-                z_x = features(
-                    x[:, d], self.M, feature_map=self.feature_map, map_param=self.map_param, Ld=self.Ld
-                )
+                z_x = self._features(x[:, d])
 
                 reg /= w[d].T @ w[d]  # remove current factor
                 G /= z_x @ w[d]  # remove current factor
                 CC, Cy = get_system_cp_krr(z_x, G, y)
             else:
-                z_x_n = features(x[idx_n, d], self.M, self.feature_map, map_param=self.map_param, Ld=self.Ld)
-                z_x_p = features(x[idx_p, d], self.M, self.feature_map, map_param=self.map_param, Ld=self.Ld)
+                z_x_n = self._features(x[idx_n, d])
+                z_x_p = self._features(x[idx_p, d])
                 reg /= w[d].T @ w[d]
                 Gn /= z_x_n @ w[d]
                 Gp /= z_x_p @ w[d]
@@ -375,8 +369,12 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             if self._extra_reg:
                 extra_reg /= w[d].T @ self.w_init[d]
                 Cy += self.mu * tl.reshape(self.w_init[d] @ extra_reg.T, (-1,), order='F')
+            reg_mat = self.reg_par * N * tl.kron(reg, tl.eye(self.M))
 
-            w_d = tl.solve(CC + self.reg_par * N * tl.kron(reg, tl.eye(self.M)), Cy)
+            if self.loss == 'l2':
+                w_d = tl.solve(CC + reg_mat, Cy)
+
+
             del CC, Cy
             w[d] = tl.reshape(
                 w_d, (self.M, self.max_rank), order="F"
@@ -394,23 +392,22 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             if self._extra_reg:
                 extra_reg *= w[d].T @ self.w_init[d]
 
+            if self.train_loss_flag:
+                # self.train_loss.append(tl.norm(y - CPKM_predict(x, w, self._features)) ** 2)
+                self.train_loss.append(1-accuracy_score(y, tl.sign(CPKM_predict(x, w, self._features))))
+
+        if self.train_loss_flag:
+            self.train_loss = tl.tensor(self.train_loss)
         w[d] = w[d] * loadings
         self.weights_ = w
         return self
 
-    def decision_function(self, x: tl.tensor, **kwargs):
+    def decision_function(self, x: tl.tensor):
         check_is_fitted(self, ["weights_"])
         x = check_array(x)
-        N, D = x.shape
-        y_pred = tl.ones((N, 1))
-        for d in range(0, D):
-            z_x = features(x[:, d], self.M, self.feature_map, map_param=self.map_param, Ld=self.Ld)
-            y_pred = y_pred * (z_x @ self.weights_[d])
-        y_pred = tl.sum(y_pred, axis=1)
-        return y_pred
+        return CPKM_predict(x, self.weights_, self._features)
 
     def predict(self, x: tl.tensor, **kwargs):
         # check_is_fitted(self, ["weights_"])
-        y_pred = self.decision_function(x, **kwargs)
-        return tl.sign(y_pred)
+        return tl.sign(self.decision_function(x))
 

@@ -45,3 +45,23 @@ def init_k(W, V):
 
     k = V[0] @ WV.T
     return k.reshape((-1, 1), order='F') #flatten M x R_w
+
+
+def CPKM_predict(x, w, features):
+    """
+    Prediction function for CPD based kernel machines.
+    Args:
+        x: input data/features, shape (N, D)
+        w: CPD weights tensor, list of length D containing (M x R) arrays
+        features: the feature map function, z_x = features(x)
+
+    Returns:
+        (N,1) array with outputs
+    """
+    N, D = x.shape
+    y_pred = tl.ones((N, 1))
+    for d in range(0, D):
+        z_x = features(x[:, d])
+        y_pred = y_pred * (z_x @ w[d])
+    y_pred = tl.sum(y_pred, axis=1)
+    return y_pred

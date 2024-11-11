@@ -3,6 +3,7 @@ import pickle
 import numpy as np
 import tensorlibrary as tl 
 from tensorlibrary.learning.t_krr import CPKRR
+from tensorlibrary.learning.t_svm import CPSVM
 
 with open('test_model.pkl', 'rb') as f:
     model_params = pickle.load(f)
@@ -25,12 +26,20 @@ N = len(y)
 from sklearn.preprocessing import MinMaxScaler
 scaler = MinMaxScaler()
 X = scaler.fit_transform(X)
-model = CPKRR(
-    M=5, 
-    # w_init=W_init, 
-    feature_map=features, 
-    reg_par=l/N, 
-    num_sweeps=num_sweeps, 
+# model = CPKRR(
+#     M=5,
+#     # w_init=W_init,
+#     feature_map=features,
+#     reg_par=l/N,
+#     num_sweeps=num_sweeps,
+#     max_rank=R
+#     )
+model = CPSVM(
+    M=2,
+    w_init=W_init,
+    feature_map=features,
+    reg_par=l/N,
+    num_sweeps=num_sweeps,
     max_rank=R
     )
 
