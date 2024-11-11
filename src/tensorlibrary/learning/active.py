@@ -5,10 +5,11 @@ Active Learning with tensor kernel machines
 # library imports
 import tensorly as tl
 from sklearn.metrics.pairwise import rbf_kernel
-from sklearn.base import BaseEstimator, ClassifierMixin, clone
+from sklearn.base import BaseEstimator, ClassifierMixin, clone, TransformerMixin
 from sklearn.pipeline import Pipeline
+from imblearn.under_sampling import RandomUnderSampler
 import random
-from functools import partial
+from functools import partial, reduce
 
 from numba import njit
 import numpy as np
@@ -20,7 +21,8 @@ from tensorlibrary.linalg.linalg import dot_r1
 
 class ActiveLearnClassifier(BaseEstimator, ClassifierMixin):
     def __init__(self, init_model, n_samples, strategy, batch_size=2048, break_at_pos=False, min_n_samples=0,
-                 similarity='rbf', pos_only=False, al_parameters={}, model_type="SVC", model_params={}):
+                 similarity='rbf', pos_only=False, al_parameters={}, model_type="SVC", model_params={}, groups=None,
+                 ratio=None, random_state=42):
 
         self.init_model =init_model
         self.n_samples = n_samples
@@ -34,9 +36,13 @@ class ActiveLearnClassifier(BaseEstimator, ClassifierMixin):
         self.labeling_count = 0
         self.similarity = similarity
         self.model_type = model_type
+        self.groups = groups
+        self.ratio = ratio
+        self.random_state = random_state
         self.X = None
         self.y = None
         self.train_indices = None
+        self.sample_indices_ = None
         if self.strategy == 'uncertainty':
             self.al_parameters['l'] = 1
             self.algorithm = partial(combined_strategy, **self.al_parameters)
@@ -52,6 +58,10 @@ class ActiveLearnClassifier(BaseEstimator, ClassifierMixin):
     def test_indices(self):
         return np.setdiff1d(np.arange(len(self.y)), self.train_indices)
 
+    @property
+    def included_groups(self):
+        return self.groups[self.train_indices].unique()
+
     def _initiate_model(self):
         self.model = clone(self.init_model)
         if isinstance(self.init_model, BaseEstimator):
@@ -63,6 +73,12 @@ class ActiveLearnClassifier(BaseEstimator, ClassifierMixin):
             self.model['clf'].set_params(**self.model_parameters)
 
         return self
+
+    def _update_model_params(self, params):
+        if isinstance(self.init_model, BaseEstimator):
+            self.model.set_params(**params)
+        elif isinstance(self.init_model, Pipeline):
+            self.model['clf'].set_params(**params)
 
     def select_samples(self, X, model_outputs, y=None):
         """
@@ -118,12 +134,18 @@ class ActiveLearnClassifier(BaseEstimator, ClassifierMixin):
 
             self.train_indices = tl.concatenate(indices_select)
 
+        self.labeling_count = len(self.train_indices)
         if self.pos_only:
             self.train_indices = pos_indices[self.indices]
 
-        self.labeling_count = len(self.train_indices)
+        if self.groups is not None:
+            add_groups = AddGroupsToData(self.groups)
+            self.train_indices = add_groups.fit_transform(self.train_indices)
+
+
         return self
-    def fit(self, X, y):
+
+    def fit(self, X, y, *, model_outputs=None, groups=None):
         """
         Fit the model with the selected samples.
         Args:
@@ -133,14 +155,26 @@ class ActiveLearnClassifier(BaseEstimator, ClassifierMixin):
         Returns:
             fitted model
         """
+        if groups is not None:
+            self.groups = groups
 
-        # if model_outputs is None:
-        #     model_outputs = self.init_model.decision_function(X)
-        # self.select_samples(X, model_outputs, y)
-        # self.labeling_count += len(self.train_indices)
+        if model_outputs is None:
+            model_outputs = self.init_model.decision_function(X)
+
+        self.select_samples(X, model_outputs, y)
+
+        # self.X = X[self.train_indices]
+        # self.y = y[self.train_indices]
+
+        if self.ratio is not None:
+            rus = RandomUnderSampler(sampling_strategy=1/self.ratio, random_state=self.random_state)
+            self.train_indices, _ = rus.fit_resample(self.train_indices, self.y[self.train_indices])
+
+        self.X = X[self.train_indices]
+        self.y = y[self.train_indices]
 
         # retrain
-        self.model.fit(X, y)
+        self.model.fit(self.X, self.y)
 
         return self
 
@@ -150,6 +184,27 @@ class ActiveLearnClassifier(BaseEstimator, ClassifierMixin):
     def decision_function(self, X):
         return self.model.decision_function(X)
 
+
+class AddGroupsToData(BaseEstimator, TransformerMixin):
+    """
+        For transfer active learning with groups, we need to add all of the (positive) group data to the training
+        data.
+    """
+    def __init__(self, groups):
+        self.groups = groups
+        self.included_groups = None
+
+    def fit(self, idx):
+        self.included_groups = np.unique(self.groups[idx])
+        return self
+
+    def transform(self, idx):
+        added_idx = [idx]
+        for i, group in enumerate(self.included_groups):
+            added_idx.append(np.where(self.groups == group)[0])
+        idx = reduce(np.union1d, added_idx)
+
+        return idx
 
 def _compute_similarity(self, x, y, **kwargs):
     """
@@ -172,6 +227,7 @@ def _compute_similarity(self, x, y, **kwargs):
         return rbf_kernel(x, y, **kwargs)
     elif self.similarity == 'cos_feat_map':
         return cos_sim_map(x, y, **kwargs)
+
 
 
 class ActiveLearner:
@@ -431,6 +487,8 @@ def combined_strategy(x_feat, outputs, max_samples, l=0.5, m=10, sim_measure='co
         outputs[indices[k + 1]] = 1e10  # set high to avoid re-selection
 
     return indices
+
+
 
 
 # def diversity_strategy(x_feat, max_samples, sim_measure='cos', feature_map='rbf', map_param=1.0, m=10, \

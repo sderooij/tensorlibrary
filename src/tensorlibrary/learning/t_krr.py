@@ -55,7 +55,7 @@ class BaseTKRR(BaseEstimator, metaclass=ABCMeta):
         Ld=1.0,
         train_loss_flag=False,
         loss='l2',
-        penalty='l2'
+        penalty='l2',
     ):
         self.M = M
         self.w_init = w_init
@@ -69,9 +69,8 @@ class BaseTKRR(BaseEstimator, metaclass=ABCMeta):
         self.max_iter = max_iter
         self.mu = mu
         self.Ld = Ld
-        self.train_loss_flag = train_loss_flag,
+        self.train_loss_flag = train_loss_flag
         self.train_loss = []
-        self._features = partial(features, m=self.M, feature_map=self.feature_map, Ld=self.Ld, map_param=self.map_param)
         self.loss = loss
         self.penalty = penalty
 
@@ -82,6 +81,8 @@ class BaseTKRR(BaseEstimator, metaclass=ABCMeta):
     @abstractmethod
     def predict(self, x: tl.tensor, **kwargs):
         pass
+
+
 
 
 class TTKRR(BaseTKRR, ClassifierMixin):
@@ -271,7 +272,9 @@ class CPKRR(BaseTKRR, ClassifierMixin):
         class_weight=None,
         max_iter=tl.inf,
         Ld=1.0,
-        train_loss_flag=False
+        train_loss_flag=False,
+        loss='l2',
+        penalty='l2',
     ):
         super().__init__(
             M=M,
@@ -287,12 +290,15 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             mu=mu,
             Ld=Ld,
             train_loss_flag=train_loss_flag,
+            loss=loss,
+            penalty=penalty,
         )
 
         # self.weights_ = w_init
 
     def fit(self, x: tl.tensor, y: tl.tensor, **kwargs):
         self.classes_ = tl.tensor([-1, 1])  # TODO based on y
+        self._features = partial(features, m=self.M, feature_map=self.feature_map, Ld=self.Ld, map_param=self.map_param)
 
         if self.mu != 0 and self.w_init is not None:
             self._extra_reg = True
