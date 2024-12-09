@@ -19,7 +19,7 @@ def init_CP(w_init, M, D, R, *, random_state=None):
         w_init = temp.factors
         w = w_init
     elif isinstance(w_init, list):
-        w = w_init.copy()
+        w = w_init
         for d in range(D):
             w[d] /= tl.norm(w[d], order=2, axis=0)
     elif isinstance(w_init, tl.cp_tensor.CPTensor):
