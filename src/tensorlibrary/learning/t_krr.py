@@ -293,6 +293,7 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             loss=loss,
             penalty=penalty,
         )
+        self._features = None
 
         # self.weights_ = w_init
 
@@ -312,6 +313,7 @@ class CPKRR(BaseTKRR, ClassifierMixin):
         N, D = x.shape
         # initialize factors
         w = init_CP(self.w_init, self.M, D, self.max_rank, random_state=rnd)
+
 
         # initialize mapped features
         if self.class_weight is None or self.class_weight == 'none':
@@ -348,7 +350,7 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             extra_reg = reg
 
         if self.train_loss_flag:
-            self.train_loss.append(1-accuracy_score(y, tl.sign(CPKM_predict(x, w, self._features))))
+            self.train_loss.append(self._loss_fun(x, y, w))
 
         # ALS sweeps
         itemax = int(tl.min([self.num_sweeps * D, self.max_iter]))
@@ -399,8 +401,8 @@ class CPKRR(BaseTKRR, ClassifierMixin):
                 extra_reg *= w[d].T @ self.w_init[d]
 
             if self.train_loss_flag:
-                # self.train_loss.append(tl.norm(y - CPKM_predict(x, w, self._features)) ** 2)
-                self.train_loss.append(1-accuracy_score(y, tl.sign(CPKM_predict(x, w, self._features))))
+                self.train_loss.append(self._loss_fun(x, y, w))
+                # self.train_loss.append(1-accuracy_score(y, tl.sign(CPKM_predict(x, w, self._features))))
 
         if self.train_loss_flag:
             self.train_loss = tl.tensor(self.train_loss)
@@ -411,9 +413,14 @@ class CPKRR(BaseTKRR, ClassifierMixin):
     def decision_function(self, x: tl.tensor):
         check_is_fitted(self, ["weights_"])
         x = check_array(x)
+        if not hasattr(self, "_features"):
+            self._features = partial(features, m=self.M, feature_map=self.feature_map, Ld=self.Ld, map_param=self.map_param)
         return CPKM_predict(x, self.weights_, self._features)
 
     def predict(self, x: tl.tensor, **kwargs):
         # check_is_fitted(self, ["weights_"])
         return tl.sign(self.decision_function(x))
+
+    def _loss_fun(self, x: tl.tensor, y: tl.tensor, w: tl.tensor):
+        return (tl.norm(y - tl.sign(CPKM_predict(x, w, self._features))) ** 2)/x.shape[0]   # normalized loss
 

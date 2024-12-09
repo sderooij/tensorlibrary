@@ -17,24 +17,22 @@ import numpy as np
 # local imports
 from tensorlibrary.learning.features import features
 from tensorlibrary.linalg.linalg import dot_r1
+from abc import abstractmethod, ABCMeta
 
 
-class ActiveLearnClassifier(BaseEstimator, ClassifierMixin):
-    def __init__(self, init_model, n_samples, strategy, batch_size=2048, break_at_pos=False, min_n_samples=0,
-                 similarity='rbf', pos_only=False, al_parameters={}, model_type="SVC", model_params={}, groups=None,
-                 ratio=None, random_state=42):
+class BaseActiveLearnClassifier(BaseEstimator, ClassifierMixin, metaclass=ABCMeta):
+    def __init__(self, init_model, n_samples, strategy, al_parameters=None, model_type="SVC", model_params=None,
+                 groups=None,
+                 ratio=None, random_state=42, random_init=False):
 
+        if al_parameters is None:
+            al_parameters = {}
         self.init_model =init_model
         self.n_samples = n_samples
         self.strategy = strategy
-        self.batch_size = batch_size
-        self.break_at_pos = break_at_pos
-        self.min_n_samples = min_n_samples
-        self.pos_only = pos_only
         self.al_parameters = al_parameters
-        self.model_parameters = model_params
+        self.model_params = model_params.copy() if model_params is not None else {}
         self.labeling_count = 0
-        self.similarity = similarity
         self.model_type = model_type
         self.groups = groups
         self.ratio = ratio
@@ -42,35 +40,39 @@ class ActiveLearnClassifier(BaseEstimator, ClassifierMixin):
         self.X = None
         self.y = None
         self.train_indices = None
+        self.test_indices = None
         self.sample_indices_ = None
-        if self.strategy == 'uncertainty':
-            self.al_parameters['l'] = 1
-            self.algorithm = partial(combined_strategy, **self.al_parameters)
-        elif self.strategy == 'combined':
-            self.algorithm = partial(combined_strategy, **self.al_parameters)
-        else:
-            raise ValueError("Invalid strategy")
-
         self.model = None
+        self.random_init = random_init
         self._initiate_model()
 
-    @property
-    def test_indices(self):
-        return np.setdiff1d(np.arange(len(self.y)), self.train_indices)
+    # @property
+    # def test_indices(self):
+    #     return np.setdiff1d(np.arange(len(self.y)), self.train_indices)
 
     @property
     def included_groups(self):
-        return self.groups[self.train_indices].unique()
+        ug = np.unique(self.groups[self.train_indices])
+        return ug[~np.isnan(ug)]
 
     def _initiate_model(self):
+        # TODO: keep the scaler the same
         self.model = clone(self.init_model)
-        if isinstance(self.init_model, BaseEstimator):
+        if self.random_init:        # random initialization
+            if isinstance(self.init_model, ClassifierMixin):
+                self.model.set_params(**self.model_params)
+            elif isinstance(self.init_model, Pipeline):
+                self.model['clf'].set_params(**self.model_params)
+            return self
+
+        if isinstance(self.init_model, ClassifierMixin):
             if self.model_type == "CPKRR":
-                self.model_parameters['w_init'] = self.init_model.weights_
+                self.model_params['w_init'] = self.init_model.weights_
             self.model.set_params(**self.model_parameters)
         elif isinstance(self.init_model, Pipeline):
-            self.model_parameters['w_init'] = self.init_model['clf'].weights_
-            self.model['clf'].set_params(**self.model_parameters)
+            if self.model_type == "CPKRR":
+                self.model_params['w_init'] = self.init_model['clf'].weights_
+            self.model['clf'].set_params(**self.model_params)
 
         return self
 
@@ -80,7 +82,52 @@ class ActiveLearnClassifier(BaseEstimator, ClassifierMixin):
         elif isinstance(self.init_model, Pipeline):
             self.model['clf'].set_params(**params)
 
-    def select_samples(self, X, model_outputs, y=None):
+
+    def _adapt_params(self, strategy, **kwargs):
+        if strategy == 'uncertainty':
+            self.al_parameters['l'] = 1
+            self.algorithm = partial(combined_strategy, **self.al_parameters)
+        elif strategy == 'combined':
+            self.algorithm = partial(combined_strategy, **self.al_parameters)
+        else:
+            raise ValueError("Invalid strategy")
+
+    @abstractmethod
+    def select_samples(self, X, y=None, **kwargs):
+        return self
+
+    @abstractmethod
+    def fit(self, X, y, **kwargs):
+        return self
+
+    def predict(self, X):
+        return self.model.predict(X)
+
+    def decision_function(self, X):
+        return self.model.decision_function(X)
+
+
+class ActiveLearnClassifier(BaseActiveLearnClassifier):
+    def __init__(self, init_model, n_samples, strategy, batch_size=2048, break_at_pos=False, min_n_samples=0,
+                 similarity='rbf', pos_only=False, al_parameters=None, model_type="SVC", model_params=None, groups=None,
+                 ratio=None, random_state=42, random_init=False):
+        super().__init__(init_model, n_samples, strategy, al_parameters, model_type, model_params, groups, ratio,
+                         random_state, random_init)
+
+        self.batch_size = batch_size
+        self.break_at_pos = break_at_pos
+        self.min_n_samples = min_n_samples
+        self.pos_only = pos_only
+        self.similarity = similarity
+        if self.strategy == 'uncertainty':
+            self.al_parameters['l'] = 1
+            self.algorithm = partial(combined_strategy, **self.al_parameters)
+        elif self.strategy == 'combined':
+            self.algorithm = partial(combined_strategy, **self.al_parameters)
+        else:
+            raise ValueError("Invalid strategy")
+
+    def select_samples(self, X, y=None,*, model_outputs=None):
         """
                 Select the most informative samples. If batch_size is set, select samples in batches.
 
@@ -94,6 +141,7 @@ class ActiveLearnClassifier(BaseEstimator, ClassifierMixin):
                 """
         self.X = X
         self.y = y
+        n_input = len(y)
 
         if self.pos_only:
             pos_indices = np.where(model_outputs > 0)[0]
@@ -109,10 +157,10 @@ class ActiveLearnClassifier(BaseEstimator, ClassifierMixin):
             indices = np.arange(0, total_samples)
             batch_indices = [indices[i:i + self.batch_size] for i in range(0, total_samples, self.batch_size)]
             n_batches = len(batch_indices)
-            n_samples_per_batch = np.ceil(self.n_samples / n_batches)
+            n_samples_per_batch = int(np.ceil(self.n_samples / n_batches))
             # n_samples_last_batch = np.min(len(batch_indices[-1]), self.n_samples - n_samples_per_batch * (n_batches -
             #                                                                                               1))
-            indices_select = np.array([])
+            indices_select = np.empty((0,), dtype=int)
             min_selected_flag = False
             total_selected = 0
             for k, idx in enumerate(batch_indices):
@@ -132,7 +180,7 @@ class ActiveLearnClassifier(BaseEstimator, ClassifierMixin):
                 if total_selected >= self.n_samples:
                     break
 
-            self.train_indices = tl.concatenate(indices_select)
+            self.train_indices = indices_select
 
         self.labeling_count = len(self.train_indices)
         if self.pos_only:
@@ -141,11 +189,90 @@ class ActiveLearnClassifier(BaseEstimator, ClassifierMixin):
         if self.groups is not None:
             add_groups = AddGroupsToData(self.groups)
             self.train_indices = add_groups.fit_transform(self.train_indices)
-
-
+        self.test_indices = np.setdiff1d(np.arange(n_input), self.train_indices)
         return self
 
     def fit(self, X, y, *, model_outputs=None, groups=None):
+        """
+        Fit the model with the selected samples.
+        Args:
+            X: input data
+            y: labels
+            model_outputs: model outputs, of init_model for the input data X, if None, it will be computed. Default is None
+            groups: groups for transfer active learning. Default is None. If not None, all samples in the selected
+                    groups will be added to the training data.
+
+        Returns:
+            fitted model
+        """
+        if groups is not None:
+            self.groups = groups
+
+        if model_outputs is None:
+            model_outputs = self.init_model.decision_function(X)
+
+        self.select_samples(X, y, model_outputs=model_outputs)
+
+        # self.X = X[self.train_indices]
+        # self.y = y[self.train_indices]
+
+        if (self.ratio is not None and (sum(self.y[self.train_indices]==-1)/sum(self.y[self.train_indices]==1) >
+                self.ratio)):
+            rus = RandomUnderSampler(sampling_strategy=1/self.ratio, random_state=self.random_state)
+            self.train_indices, _ = rus.fit_resample(self.train_indices.reshape(-1,1), self.y[self.train_indices])
+            self.train_indices = self.train_indices.flatten()
+
+        self.X = X[self.train_indices, :]
+        self.y = y[self.train_indices]
+
+        # retrain
+        self.model.fit(self.X, self.y)
+
+        return self
+
+
+class RandomSampleClassifier(BaseActiveLearnClassifier):
+    def __init__(self, init_model, n_samples, strategy, batch_size=2048, al_parameters=None, model_type="SVC",
+                 model_params=None, groups=None,
+                 ratio=None, random_state=42, random_init=False):
+        super().__init__(init_model, n_samples, strategy, al_parameters, model_type, model_params, groups, ratio,
+                         random_state, random_init)
+        self.batch_size = batch_size
+
+    def select_samples(self, X, y=None, **kwargs):
+
+        if self.strategy == "random":
+            if self.ratio is None:
+                self.ratio = 1
+            num_pos = self.n_samples // (1 + self.ratio)
+            num_neg = self.n_samples - num_pos
+            indices = np.arange(len(y))
+            rus = RandomUnderSampler(sampling_strategy={1: num_pos, -1: num_neg}, random_state=self.random_state)
+            self.train_indices, _ = rus.fit_resample(indices.reshape(-1,1), y)
+        elif self.strategy == "LOGI":   # leave one group in
+            # select one group
+            np.random.seed(self.random_state)
+            group = np.random.choice(np.unique(self.groups[~np.isnan(self.groups)]))
+            pos_indices = np.where(self.groups == group)[0]
+            assert np.all(y[pos_indices] == 1)
+            num_pos = len(pos_indices)
+            if self.ratio is None:
+                num_neg = self.n_samples - num_pos
+            else:
+                num_neg = num_pos * self.ratio
+            neg_indices = np.where(y==-1)[0]
+            neg_indices = np.random.choice(neg_indices, num_neg, replace=False)
+            self.train_indices = np.concatenate([pos_indices, neg_indices])
+            # shuffle
+            np.random.shuffle(self.train_indices)
+        else:
+            raise ValueError("Invalid strategy")
+
+        self.labeling_count = len(self.train_indices)
+        self.test_indices = np.setdiff1d(np.arange(len(y)), self.train_indices)
+        return self
+
+    def fit(self, X, y, *, groups=None):
         """
         Fit the model with the selected samples.
         Args:
@@ -158,31 +285,15 @@ class ActiveLearnClassifier(BaseEstimator, ClassifierMixin):
         if groups is not None:
             self.groups = groups
 
-        if model_outputs is None:
-            model_outputs = self.init_model.decision_function(X)
+        self.select_samples(X, y)
 
-        self.select_samples(X, model_outputs, y)
-
-        # self.X = X[self.train_indices]
-        # self.y = y[self.train_indices]
-
-        if self.ratio is not None:
-            rus = RandomUnderSampler(sampling_strategy=1/self.ratio, random_state=self.random_state)
-            self.train_indices, _ = rus.fit_resample(self.train_indices, self.y[self.train_indices])
-
-        self.X = X[self.train_indices]
+        self.X = X[self.train_indices, :]
         self.y = y[self.train_indices]
 
         # retrain
         self.model.fit(self.X, self.y)
 
         return self
-
-    def predict(self, X):
-        return self.model.predict(X)
-
-    def decision_function(self, X):
-        return self.model.decision_function(X)
 
 
 class AddGroupsToData(BaseEstimator, TransformerMixin):
@@ -205,6 +316,10 @@ class AddGroupsToData(BaseEstimator, TransformerMixin):
         idx = reduce(np.union1d, added_idx)
 
         return idx
+
+
+
+
 
 def _compute_similarity(self, x, y, **kwargs):
     """
@@ -229,127 +344,127 @@ def _compute_similarity(self, x, y, **kwargs):
         return cos_sim_map(x, y, **kwargs)
 
 
-
-class ActiveLearner:
-    def __init__(self, data, outputs, n_samples, strategy, *, parameters={}, batch_size=None, break_at_pos=False,
-                 labels=None,
-                 min_n_samples=50, pos_only=False):
-
-        self.data = data
-        self.outputs = outputs
-        self.n_samples = n_samples
-        self.strategy = strategy
-        self.batch_size = batch_size
-        self.algorithm = None
-        self.indices = None
-        self.min_n_samples = min_n_samples
-        self.pos_only = pos_only
-        self.parameters = parameters
-        if self.strategy == 'uncertainty':
-            self.parameters['l'] = 1
-            self.algorithm = partial(combined_strategy, **self.parameters)
-        elif self.strategy == 'combined':
-            self.algorithm = partial(combined_strategy, **self.parameters)
-        else:
-            raise ValueError("Invalid strategy")
-
-        self.labels = labels
-        self.break_at_pos = break_at_pos
-
-    def select_samples(self, **kwargs):
-        """
-        Select the most informative samples. If batch_size is set, select samples in batches.
-
-        Args:
-            **kwargs: Depends on the strategy used.
-            For combined strategy, the following are required:
-                l: trade-off parameter between uncertainty and diversity (0.5 by default)
-                sim_measure: similarity measure, default is cosine similarity: 'cos'
-                feature_map: feature map to use, default is rbf kernel: 'rbf'
-
-            For diversity strategy, the following are required:
-                x_feat: features of the X
-                max_samples: maximum number of samples to select for the batch
-                sim_measure: similarity measure, default is cosine similarity: 'cos'
-                feature_map: feature map to use, default is rbf kernel: 'rbf'
-                map_param: parameter for the feature map (or kernel function), default is 1.0
-                m: number of basis functions or order of polynomial
-
-        Returns:
-            indices: indices of the most uncertain samples
-        """
-        if self.pos_only:
-            pos_indices = np.where(self.outputs > 0)[0]
-            self.data = self.data[pos_indices]
-            self.outputs = self.outputs[pos_indices]
-            self.labels = self.labels[pos_indices]
-
-        if self.batch_size is None:
-            self.indices = self.algorithm(self.data, self.outputs, self.n_samples, break_at_pos=self.break_at_pos,
-                                          labels=self.labels, min_n_samples=self.min_n_samples, **kwargs)
-
-        else:
-            total_samples = len(self.outputs)
-            # n_batches = total_samples // self.batch_size
-            # n_samples_per_batch = self.n_samples // n_batches
-            # n_samples_last_batch = self.n_samples - n_samples_per_batch * (n_batches - 1)
-            indices = np.arange(0, total_samples)
-            batch_indices = [indices[i:i + self.batch_size] for i in range(0, total_samples, self.batch_size)]
-            n_batches = len(batch_indices)
-            n_samples_per_batch = np.ceil(self.n_samples / n_batches)
-            # n_samples_last_batch = np.min(len(batch_indices[-1]), self.n_samples - n_samples_per_batch * (n_batches -
-            #                                                                                               1))
-            indices_select = np.array([])
-            min_selected_flag = False
-            total_selected = 0
-            for k, idx in enumerate(batch_indices):
-                al_indices_batch = self.algorithm(self.data[idx, :], self.outputs[idx],
-                                                  n_samples_per_batch,
-                                                  break_at_pos=self.break_at_pos, labels=self.labels[idx],
-                                                  min_n_samples=self.min_n_samples * (1 - min_selected_flag),
-                                                  prev_batch=self.data[indices_select, :], **kwargs)
-
-                indices_select = np.append(indices_select, idx[al_indices_batch])
-                total_selected += len(al_indices_batch)
-                if not min_selected_flag:
-                    min_selected_flag = total_selected >= self.min_n_samples
-                if self.break_at_pos:
-                    if np.any(self.labels[indices_select] == 1) and min_selected_flag:
-                        break
-                if total_selected >= self.n_samples:
-                    break
-
-            # for k in range(n_batches):
-            #     idx_start = k * self.batch_size
-            #     if k == n_batches - 1: # last batch
-            #         cur_indices = indices[idx_start:]
-            #         sel_indices = self.algorithm(self.X[idx_start:, :], self.outputs[idx_start:],
-            #                                      n_samples_last_batch,
-            #                                      break_at_pos=self.break_at_pos, labels=self.labels[idx_start:],
-            #                                      min_n_samples=self.min_n_samples*(1-min_selected_flag), **kwargs)
-            #
-            #     else:
-            #         idx_end = (k + 1) * self.batch_size
-            #         cur_indices = indices[idx_start:idx_end]
-            #         sel_indices = self.algorithm(self.X[idx_start:idx_end, :], self.outputs[idx_start:idx_end],
-            #                                      n_samples_per_batch,
-            #                                       break_at_pos=self.break_at_pos, labels=self.labels[idx_start:idx_end],
-            #                                      min_n_samples=self.min_n_samples*(1-min_selected_flag), **kwargs)
-            #
-            #     indices_select.append(cur_indices[sel_indices])
-            #     if not min_selected_flag:
-            #         min_selected_flag = sum(len(arr) for arr in indices_select) > self.min_n_samples
-            #     if self.break_at_pos:
-            #         # check where indices are positive
-            #         if np.any(self.labels[indices_select[-1]] == 1) and min_selected_flag:
-            #             break
-
-            self.indices = tl.concatenate(indices_select)
-
-        if self.pos_only:
-            self.indices = pos_indices[self.indices]
-
-        return self.indices
+#
+# class ActiveLearner:
+#     def __init__(self, data, outputs, n_samples, strategy, *, parameters={}, batch_size=None, break_at_pos=False,
+#                  labels=None,
+#                  min_n_samples=50, pos_only=False):
+#
+#         self.data = data
+#         self.outputs = outputs
+#         self.n_samples = n_samples
+#         self.strategy = strategy
+#         self.batch_size = batch_size
+#         self.algorithm = None
+#         self.indices = None
+#         self.min_n_samples = min_n_samples
+#         self.pos_only = pos_only
+#         self.parameters = parameters
+#         if self.strategy == 'uncertainty':
+#             self.parameters['l'] = 1
+#             self.algorithm = partial(combined_strategy, **self.parameters)
+#         elif self.strategy == 'combined':
+#             self.algorithm = partial(combined_strategy, **self.parameters)
+#         else:
+#             raise ValueError("Invalid strategy")
+#
+#         self.labels = labels
+#         self.break_at_pos = break_at_pos
+#
+#     def select_samples(self, **kwargs):
+#         """
+#         Select the most informative samples. If batch_size is set, select samples in batches.
+#
+#         Args:
+#             **kwargs: Depends on the strategy used.
+#             For combined strategy, the following are required:
+#                 l: trade-off parameter between uncertainty and diversity (0.5 by default)
+#                 sim_measure: similarity measure, default is cosine similarity: 'cos'
+#                 feature_map: feature map to use, default is rbf kernel: 'rbf'
+#
+#             For diversity strategy, the following are required:
+#                 x_feat: features of the X
+#                 max_samples: maximum number of samples to select for the batch
+#                 sim_measure: similarity measure, default is cosine similarity: 'cos'
+#                 feature_map: feature map to use, default is rbf kernel: 'rbf'
+#                 map_param: parameter for the feature map (or kernel function), default is 1.0
+#                 m: number of basis functions or order of polynomial
+#
+#         Returns:
+#             indices: indices of the most uncertain samples
+#         """
+#         if self.pos_only:
+#             pos_indices = np.where(self.outputs > 0)[0]
+#             self.data = self.data[pos_indices]
+#             self.outputs = self.outputs[pos_indices]
+#             self.labels = self.labels[pos_indices]
+#
+#         if self.batch_size is None:
+#             self.indices = self.algorithm(self.data, self.outputs, self.n_samples, break_at_pos=self.break_at_pos,
+#                                           labels=self.labels, min_n_samples=self.min_n_samples, **kwargs)
+#
+#         else:
+#             total_samples = len(self.outputs)
+#             # n_batches = total_samples // self.batch_size
+#             # n_samples_per_batch = self.n_samples // n_batches
+#             # n_samples_last_batch = self.n_samples - n_samples_per_batch * (n_batches - 1)
+#             indices = np.arange(0, total_samples)
+#             batch_indices = [indices[i:i + self.batch_size] for i in range(0, total_samples, self.batch_size)]
+#             n_batches = len(batch_indices)
+#             n_samples_per_batch = np.ceil(self.n_samples / n_batches)
+#             # n_samples_last_batch = np.min(len(batch_indices[-1]), self.n_samples - n_samples_per_batch * (n_batches -
+#             #                                                                                               1))
+#             indices_select = np.array([])
+#             min_selected_flag = False
+#             total_selected = 0
+#             for k, idx in enumerate(batch_indices):
+#                 al_indices_batch = self.algorithm(self.data[idx, :], self.outputs[idx],
+#                                                   n_samples_per_batch,
+#                                                   break_at_pos=self.break_at_pos, labels=self.labels[idx],
+#                                                   min_n_samples=self.min_n_samples * (1 - min_selected_flag),
+#                                                   prev_batch=self.data[indices_select, :], **kwargs)
+#
+#                 indices_select = np.append(indices_select, idx[al_indices_batch])
+#                 total_selected += len(al_indices_batch)
+#                 if not min_selected_flag:
+#                     min_selected_flag = total_selected >= self.min_n_samples
+#                 if self.break_at_pos:
+#                     if np.any(self.labels[indices_select] == 1) and min_selected_flag:
+#                         break
+#                 if total_selected >= self.n_samples:
+#                     break
+#
+#             # for k in range(n_batches):
+#             #     idx_start = k * self.batch_size
+#             #     if k == n_batches - 1: # last batch
+#             #         cur_indices = indices[idx_start:]
+#             #         sel_indices = self.algorithm(self.X[idx_start:, :], self.outputs[idx_start:],
+#             #                                      n_samples_last_batch,
+#             #                                      break_at_pos=self.break_at_pos, labels=self.labels[idx_start:],
+#             #                                      min_n_samples=self.min_n_samples*(1-min_selected_flag), **kwargs)
+#             #
+#             #     else:
+#             #         idx_end = (k + 1) * self.batch_size
+#             #         cur_indices = indices[idx_start:idx_end]
+#             #         sel_indices = self.algorithm(self.X[idx_start:idx_end, :], self.outputs[idx_start:idx_end],
+#             #                                      n_samples_per_batch,
+#             #                                       break_at_pos=self.break_at_pos, labels=self.labels[idx_start:idx_end],
+#             #                                      min_n_samples=self.min_n_samples*(1-min_selected_flag), **kwargs)
+#             #
+#             #     indices_select.append(cur_indices[sel_indices])
+#             #     if not min_selected_flag:
+#             #         min_selected_flag = sum(len(arr) for arr in indices_select) > self.min_n_samples
+#             #     if self.break_at_pos:
+#             #         # check where indices are positive
+#             #         if np.any(self.labels[indices_select[-1]] == 1) and min_selected_flag:
+#             #             break
+#
+#             self.indices = tl.concatenate(indices_select)
+#
+#         if self.pos_only:
+#             self.indices = pos_indices[self.indices]
+#
+#         return self.indices
 
 
 def cos_sim_map(x, y, m=10, *, feature_map='rbf', map_param=1., Ld=1.):
@@ -434,7 +549,7 @@ def combined_strategy(x_feat, outputs, max_samples, l=0.5, m=10, sim_measure='co
         indices = uncertainty_strategy(outputs, n_samples=max_samples, break_at_pos=break_at_pos, labels=labels)
         return indices
     outputs = tl.abs(outputs)
-    if prev_batch is not None:
+    if prev_batch is not None and prev_batch.shape[0] > 0:
         len_batch = prev_batch.shape[0]
         max_samples = len_batch + max_samples
         x_feat = np.concatenate([prev_batch, x_feat], axis=0)
@@ -442,6 +557,8 @@ def combined_strategy(x_feat, outputs, max_samples, l=0.5, m=10, sim_measure='co
         indices[:len_batch] = np.arange(len_batch)
         kstart = len_batch
         outputs = np.concatenate([np.ones(len_batch)*1e10, outputs])
+        if break_at_pos:
+            labels = np.concatenate([-1*np.ones(len_batch), labels])
     else:
         # initialize indices
         indices = tl.zeros(max_samples, dtype=int) # set high to avoid re-selection and to keep the indices
@@ -486,6 +603,11 @@ def combined_strategy(x_feat, outputs, max_samples, l=0.5, m=10, sim_measure='co
 
         outputs[indices[k + 1]] = 1e10  # set high to avoid re-selection
 
+    if prev_batch is not None and prev_batch.shape[0] > 0:
+        indices = indices[len_batch:] - len_batch
+
+    if np.any(indices > x_feat.shape[0]):
+        print("Error")
     return indices
 
 
@@ -541,6 +663,7 @@ def combined_strategy(x_feat, outputs, max_samples, l=0.5, m=10, sim_measure='co
 #                 break
 #
 #     return indices
+
 
 
 def rbf(x, y, sigma):

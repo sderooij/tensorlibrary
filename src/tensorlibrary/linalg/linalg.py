@@ -165,3 +165,42 @@ def dot_r1_numba(a,b):
     return prod
 
 
+def cp_dot(tensor1, tensor2, *, engine: Optional[Text] = "numpy"):
+    if isinstance(tensor1, tl.cp_tensor.CPTensor):
+        factors1 = tensor1.factors.copy()
+        factors1[0] = factors1[0] * tensor1.weights
+    elif isinstance(tensor1, list):
+        factors1 = tensor1.copy()
+
+    if isinstance(tensor2, tl.cp_tensor.CPTensor):
+        factors2 = tensor2.factors.copy()
+        factors2[0] = factors2[0] * tensor2.weights
+    elif isinstance(tensor2, list):
+        factors2 = tensor2.copy()
+
+    d = len(factors1)
+    assert d == len(factors2), "Both tensors must have the same number of modes"
+    assert all(factors1[i].shape[0] == factors2[i].shape[0] for i in range(d)), "Dimension mismatch between tensors"
+
+    if engine == "numba":
+        r1 = factors1[0].shape[1]
+        r2 = factors2[0].shape[1]
+        return _cp_dot_numba(factors1, factors2, d, r1, r2)
+    else:
+        r1 = factors1[0].shape[1]
+        r2 = factors2[0].shape[1]
+        result = tl.ones((r1, r2))
+        for i in range(0, d):
+            result *= factors1[i].T @ factors2[i]
+
+        return tl.sum(result)
+
+@njit()
+def _cp_dot_numba(factors1, factors2, d, r1, r2):
+    results = np.ones((r1, r2))
+    for i in range(d):
+        results *= factors1[i].T @ factors2[i]
+    return np.sum(results)
+
+
+
