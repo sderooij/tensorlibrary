@@ -312,7 +312,13 @@ class CPKRR(BaseTKRR, ClassifierMixin):
         x, y = check_X_y(x, y, y_numeric=True, multi_output=False)
         N, D = x.shape
         # initialize factors
+        # if isinstance(self.w_init, list):
+        #     for d in range(D):
+        #         self.w_init[d] /= tl.norm(self.w_init[d], order=2, axis=0)
         w = init_CP(self.w_init, self.M, D, self.max_rank, random_state=rnd)
+        # if isinstance(self.w_init, list):
+        #     for d in range(D):
+        #         self.w_init[d] /= tl.norm(self.w_init[d], order=2, axis=0)
 
 
         # initialize mapped features
