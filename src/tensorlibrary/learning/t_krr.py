@@ -56,6 +56,8 @@ class BaseTKRR(BaseEstimator, metaclass=ABCMeta):
         train_loss_flag=False,
         loss='l2',
         penalty='l2',
+        random_init=False,
+        debug=False,
     ):
         self.M = M
         self.w_init = w_init
@@ -73,6 +75,8 @@ class BaseTKRR(BaseEstimator, metaclass=ABCMeta):
         self.train_loss = []
         self.loss = loss
         self.penalty = penalty
+        self.random_init = random_init
+        self.debug = debug
 
     @abstractmethod
     def fit(self, x: tl.tensor, y: tl.tensor, **kwargs):
@@ -275,6 +279,8 @@ class CPKRR(BaseTKRR, ClassifierMixin):
         train_loss_flag=False,
         loss='l2',
         penalty='l2',
+        random_init=False,
+        debug=False,
     ):
         super().__init__(
             M=M,
@@ -292,6 +298,8 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             train_loss_flag=train_loss_flag,
             loss=loss,
             penalty=penalty,
+            random_init=random_init,
+            debug=debug,
         )
         self._features = None
 
@@ -315,7 +323,10 @@ class CPKRR(BaseTKRR, ClassifierMixin):
         # if isinstance(self.w_init, list):
         #     for d in range(D):
         #         self.w_init[d] /= tl.norm(self.w_init[d], order=2, axis=0)
-        w = init_CP(self.w_init, self.M, D, self.max_rank, random_state=rnd)
+        if self.random_init:
+            w = init_CP(None, self.M, D, self.max_rank, random_state=rnd)
+        else:
+            w = init_CP(self.w_init, self.M, D, self.max_rank, random_state=rnd)
         # if isinstance(self.w_init, list):
         #     for d in range(D):
         #         self.w_init[d] /= tl.norm(self.w_init[d], order=2, axis=0)
@@ -353,7 +364,7 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             balanced = True
 
         if self._extra_reg:
-            extra_reg = reg
+            extra_reg = reg.copy()
 
         if self.train_loss_flag:
             self.train_loss.append(self._loss_fun(x, y, w))
@@ -386,8 +397,11 @@ class CPKRR(BaseTKRR, ClassifierMixin):
             reg_mat = self.reg_par * N * tl.kron(reg, tl.eye(self.M))
 
             if self.loss == 'l2':
+                if self.debug:
+                    # check that the loss matrix is positive definite
+                    if not tl.all(np.linalg.eigvals(CC + reg_mat) > 0):
+                        raise ValueError("Loss matrix is not positive definite")
                 w_d = tl.solve(CC + reg_mat, Cy)
-
 
             del CC, Cy
             w[d] = tl.reshape(

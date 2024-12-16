@@ -10,6 +10,7 @@ from sklearn.pipeline import Pipeline
 from imblearn.under_sampling import RandomUnderSampler
 import random
 from functools import partial, reduce
+from copy import deepcopy
 
 from numba import njit
 import numpy as np
@@ -58,21 +59,32 @@ class BaseActiveLearnClassifier(BaseEstimator, ClassifierMixin, metaclass=ABCMet
     def _initiate_model(self):
         # TODO: keep the scaler the same
         self.model = clone(self.init_model)
-        if self.random_init:        # random initialization
-            if isinstance(self.init_model, ClassifierMixin):
-                self.model.set_params(**self.model_params)
-            elif isinstance(self.init_model, Pipeline):
-                self.model['clf'].set_params(**self.model_params)
-            return self
+        # if self.random_init:        # random initialization
+        #     if isinstance(self.init_model, ClassifierMixin):
+        #         self.model.set_params(**self.model_params)
+        #     elif isinstance(self.init_model, Pipeline):
+        #         self.model['clf'].set_params(**self.model_params)
+        #     return self
+        if self.model_type == "CPKRR":
+            self.model_params['w_init'] = self.init_model['clf'].weights_
+            if self.random_init:
+                self.model_params['random_init'] = True
+        else:
+            raise ValueError("Invalid model type")
 
         if isinstance(self.init_model, ClassifierMixin):
-            if self.model_type == "CPKRR":
-                self.model_params['w_init'] = self.init_model.weights_
-            self.model.set_params(**self.model_parameters)
+            # if self.model_type == "CPKRR":
+            #     self.model_params['w_init'] = self.init_model.weights_
+            #     if self.random_init:
+            #         self.model_params['random_init'] = True
+            self.model.set_params(**self.model_params)
         elif isinstance(self.init_model, Pipeline):
-            if self.model_type == "CPKRR":
-                self.model_params['w_init'] = self.init_model['clf'].weights_
+            # if self.model_type == "CPKRR":
+            #     self.model_params['w_init'] = self.init_model['clf'].weights_
+            #     if self.random_init:
+            #         self.model_params['random_init'] = True
             self.model['clf'].set_params(**self.model_params)
+            self.model.named_steps['scaler'] = deepcopy(self.init_model.named_steps['scaler'])
 
         return self
 
@@ -251,6 +263,7 @@ class RandomSampleClassifier(BaseActiveLearnClassifier):
             self.train_indices, _ = rus.fit_resample(indices.reshape(-1,1), y)
         elif self.strategy == "LOGI":   # leave one group in
             # select one group
+            #TODO: change to crossvalidation
             np.random.seed(self.random_state)
             group = np.random.choice(np.unique(self.groups[~np.isnan(self.groups)]))
             pos_indices = np.where(self.groups == group)[0]
