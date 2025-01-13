@@ -65,3 +65,24 @@ def CPKM_predict(x, w, features):
         y_pred = y_pred * (z_x @ w[d])
     y_pred = tl.sum(y_pred, axis=1)
     return y_pred
+
+def CPKM_predict_batchwise(x, w, features, batch_size = 8192):
+    """
+    Prediction function for CPD based kernel machines in a batch-wise manner.
+    Args:
+        x: input data/features, shape (N, D)
+        w: CPD weights tensor, list of length D containing (M x R) arrays
+        features: the feature map function, z_x = features(x)
+        batch_size: batch size for prediction
+
+    Returns:
+        (N,1) array with outputs
+    """
+    N, D = x.shape
+    y_pred = tl.zeros((N, 1))
+    for i in range(0, N, batch_size):
+        idx_end = min(i + batch_size, N)
+        y_pred[i:idx_end] = CPKM_predict(x[i:idx_end, :], w, features)
+
+    return y_pred
+

@@ -22,7 +22,7 @@ from sklearn.metrics import accuracy_score, hinge_loss
 # from tensorly import tensor
 
 
-from ._cp_krr import get_system_cp_krr, CPKM_predict
+from ._cp_krr import get_system_cp_krr, CPKM_predict, CPKM_predict_batchwise
 from ._cp_km import init_CP, _solve_TSVM_square_hinge
 from .tt_krr import get_tt_rank, update_wz_tt, initialize_wz
 from .features import features
@@ -240,7 +240,7 @@ class TTKRR(BaseTKRR, ClassifierMixin):
         return tl.sign(y_pred)
 
 
-class CPKRR(BaseTKRR, ClassifierMixin):
+class CPKRR(ClassifierMixin, BaseTKRR):
     """CP Kernel Ridge Regression (KRR)
 
     Args:
@@ -435,7 +435,21 @@ class CPKRR(BaseTKRR, ClassifierMixin):
         x = check_array(x)
         if not hasattr(self, "_features"):
             self._features = partial(features, m=self.M, feature_map=self.feature_map, Ld=self.Ld, map_param=self.map_param)
-        return CPKM_predict(x, self.weights_, self._features)
+        # if batch_size is None:
+        try:
+            return CPKM_predict_batchwise(x, self.weights_, self._features)
+        except:
+            return CPKM_predict(x, self.weights_, self._features)
+        #TODO: implement batch mode
+        # else:
+        # batch_size = 1024
+        # for i in range(0, x.shape[0],1024):
+        #     if i == 0:
+        #         y_pred = CPKM_predict(x[i : i + batch_size], self.weights_, self._features)
+        #     else:
+        #         y_pred = tl.concatenate(
+        #             [y_pred, CPKM_predict(x[i : i + batch_size], self.weights_, self._features)]
+        #         )
 
     def predict(self, x: tl.tensor, **kwargs):
         # check_is_fitted(self, ["weights_"])
