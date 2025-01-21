@@ -4,6 +4,7 @@ Function for CP kernel machines TODO: MUCH
 
 import tensorly as tl
 from scipy.optimize import minimize
+from copy import deepcopy
 
 
 def init_CP(w_init, M, D, R, *, random_state=None):
@@ -19,9 +20,9 @@ def init_CP(w_init, M, D, R, *, random_state=None):
         w_init = temp.factors
         w = w_init
     elif isinstance(w_init, list):
-        w = w_init.copy()
-        for d in range(D):
-            w[d] /= tl.norm(w[d], order=2, axis=0)
+        w = deepcopy(w_init)
+        # for d in range(D):
+        #     w[d] /= tl.norm(w[d], order=2, axis=0)
     elif isinstance(w_init, tl.cp_tensor.CPTensor):
         w = w_init.factors
     else:
@@ -71,7 +72,7 @@ def _init_model_params(x, w, feature_fun):
     reg = tl.ones((R, R))
     G = tl.ones((x.shape[0], R))
 
-    for d in range(D):
+    for d in range(D-1, -1, -1):
         (reg, G) = _init_model_params_step(d, x, w, feature_fun, reg, G)
 
     return (reg, G)

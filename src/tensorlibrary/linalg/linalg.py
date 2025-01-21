@@ -203,4 +203,51 @@ def _cp_dot_numba(factors1, factors2, d, r1, r2):
     return np.sum(results)
 
 
+def cp_dist(w1, w2):
+    """
+    ||w1 - w2||_F
+    Args:
+        w1: cp tensor 1
+        w2: cp tensor 2
+
+    Returns:
+        float: Frobenius norm of the difference between the two cp tensors
+    """
+    distance = cp_dot(w1, w1) - 2 * cp_dot(w1, w2) + cp_dot(w2, w2)
+    return np.sqrt(distance)
+
+
+def cp_cos_sim(w1, w2):
+    """
+    Cosine similarity between two cp tensors.
+    Args:
+        w1: cp  tensor 1
+        w2: cp tensor 2
+
+    Returns:
+        float: cosine similarity between the two cp tensors (in the range [-1, 1])
+    """
+    sim = cp_dot(w1, w2) / (np.sqrt(cp_dot(w1, w1)) * np.sqrt(cp_dot(w2, w2)))
+    return sim
+
+
+def cp_angle(w1, w2):
+    """
+    (principle?) Angle between two cp tensors, using cosine similarity.
+    Args:
+        w1:
+        w2:
+
+    Returns:
+
+    """
+    sim = cp_cos_sim(w1, w2)
+    angle = np.arccos(sim) * 180 / np.pi
+    return angle
+
+
+def cp_norm(w):
+    return np.sqrt(cp_dot(w, w))
+
+
 

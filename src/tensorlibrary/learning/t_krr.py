@@ -20,10 +20,11 @@ from numbers import Real
 from sklearn.metrics import accuracy_score, hinge_loss
 
 # from tensorly import tensor
+from copy import deepcopy
 
 
 from ._cp_krr import get_system_cp_krr, CPKM_predict, CPKM_predict_batchwise
-from ._cp_km import init_CP, _solve_TSVM_square_hinge
+from ._cp_km import init_CP, _solve_TSVM_square_hinge, _init_model_params
 from .tt_krr import get_tt_rank, update_wz_tt, initialize_wz
 from .features import features
 from ..random import tt_random
@@ -60,7 +61,7 @@ class BaseTKRR(BaseEstimator, metaclass=ABCMeta):
         debug=False,
     ):
         self.M = M
-        self.w_init = w_init
+        self.w_init = deepcopy(w_init)
         self.feature_map = feature_map
         self.reg_par = reg_par
         self.num_sweeps = num_sweeps
@@ -312,6 +313,8 @@ class CPKRR(ClassifierMixin, BaseTKRR):
         if self.mu != 0 and self.w_init is not None:
             self._extra_reg = True
             self.reg_par += self.mu
+            # loadings_w_init = tl.norm(self.w_init[-1], order=2, axis=0)
+            # self.w_init[-1] /= loadings_w_init
         else:
             self._extra_reg = False
 
@@ -327,6 +330,7 @@ class CPKRR(ClassifierMixin, BaseTKRR):
             w = init_CP(None, self.M, D, self.max_rank, random_state=rnd)
         else:
             w = init_CP(self.w_init, self.M, D, self.max_rank, random_state=rnd)
+
         # if isinstance(self.w_init, list):
         #     for d in range(D):
         #         self.w_init[d] /= tl.norm(self.w_init[d], order=2, axis=0)
@@ -364,7 +368,9 @@ class CPKRR(ClassifierMixin, BaseTKRR):
             balanced = True
 
         if self._extra_reg:
-            extra_reg = reg.copy()
+            extra_reg = tl.ones((self.max_rank, self.max_rank))
+            for d in range(D-1, -1,-1):
+                extra_reg *= w[d].T @ self.w_init[d]
 
         if self.train_loss_flag:
             self.train_loss.append(self._loss_fun(x, y, w))
@@ -393,7 +399,7 @@ class CPKRR(ClassifierMixin, BaseTKRR):
 
             if self._extra_reg:
                 extra_reg /= w[d].T @ self.w_init[d]
-                Cy += self.mu * tl.reshape(self.w_init[d] @ extra_reg.T, (-1,), order='F')
+                Cy += self.mu * N * tl.reshape(self.w_init[d] @ extra_reg.T, (-1,), order='F')
             reg_mat = self.reg_par * N * tl.kron(reg, tl.eye(self.M))
 
             if self.loss == 'l2':
@@ -426,6 +432,7 @@ class CPKRR(ClassifierMixin, BaseTKRR):
 
         if self.train_loss_flag:
             self.train_loss = tl.tensor(self.train_loss)
+
         w[d] = w[d] * loadings
         self.weights_ = w
         return self
@@ -457,4 +464,166 @@ class CPKRR(ClassifierMixin, BaseTKRR):
 
     def _loss_fun(self, x: tl.tensor, y: tl.tensor, w: tl.tensor):
         return (tl.norm(y - tl.sign(CPKM_predict(x, w, self._features))) ** 2)/x.shape[0]   # normalized loss
+
+
+
+class CPKRR_Adapt(CPKRR):
+    # TODO: use this in the future for the adapt methods
+    _parameter_contraints: Dict[str, Dict[str, Any]] = {
+        "M": [Interval(Real, 1, None, closed="left")],
+        "w_init": [Interval(Real, None, None, closed="neither")],
+        "feature_map": [
+            StrOptions({"rbf", "fourier", "poly", "chebyshev", "chebyshev2"})
+        ],
+        "reg_par": [Interval(Real, 0, None, closed="neither")],
+        "mu": [Interval(Real, 0, None, closed="neither")],
+        "num_sweeps": [Interval(Real, 1, None, closed="left")],
+        "map_param": [Interval(Real, 0, None, closed="neither")],
+        "max_rank": [Interval(Real, 1, None, closed="left")],
+        "random_state": ["random_state"],
+        "class_weight": [StrOptions({"balanced"}), dict, None],
+    }
+
+    def __init__(
+            self,
+            M: int = 5,
+            w_init=None,
+            feature_map="rbf",
+            reg_par=1e-5,
+            num_sweeps=15,
+            map_param=0.1,
+            max_rank=5,
+            random_state=None,
+            mu=0,
+            class_weight=None,
+            max_iter=tl.inf,
+            Ld=1.0,
+            train_loss_flag=False,
+            loss='l2',
+            penalty='l2',
+            random_init=False,
+            debug=False,
+            source_model=None,
+            batch_size=8192,
+    ):
+        super().__init__(
+            M=M,
+            w_init=w_init,
+            feature_map=feature_map,
+            reg_par=reg_par,
+            num_sweeps=num_sweeps,
+            map_param=map_param,
+            max_rank=max_rank,
+            random_state=random_state,
+            class_weight=class_weight,
+            max_iter=max_iter,
+            mu=mu,
+            Ld=Ld,
+            train_loss_flag=train_loss_flag,
+            loss=loss,
+            penalty=penalty,
+            random_init=random_init,
+            debug=debug,
+        )
+        self._features = None
+        self.source_model = source_model
+        if self.w_init == 'random' or self.w_init is None:
+            self.random_init = True
+        elif self.w_init == 'source':
+            self.random_init = False
+
+        self.batch_size = batch_size
+
+    def fit(self, x: tl.tensor, y: tl.tensor, **kwargs):
+        """
+        Solving:
+            min_w ||y-<G, w>
+        Args:
+            x:
+            y:
+            **kwargs:
+
+        Returns:
+
+        """
+        # set parameters
+        assert tl.min(y) == -1, "negative class must be -1"
+        assert tl.max(y) == 1, "positive class must be 1"
+        self.classes_ = tl.tensor([tl.min(y), tl.max(y)])
+
+        self._features = partial(features, m=self.M, feature_map=self.feature_map, Ld=self.Ld, map_param=self.map_param)
+        N, D = x.shape
+        rnd = check_random_state(self.random_state)
+
+        # Initialize reference weights
+        w_source = deepcopy(self.source_model.weights_)
+        loadings_source, w_source = tl.cp_tensor.cp_normalize(
+            (tl.ones(self.max_rank), w_source)
+        )
+
+        # Initialize weights with random or source model
+        if self.random_init:
+            w = init_CP(None, self.M, D, self.max_rank, random_state=rnd)
+        else:
+            w = deepcopy(w_source)
+        self.w_init = deepcopy(w)
+
+        """
+        min_w ||y-<G, w[d]>||_F^2 + (reg_par + mu)<W[d]^T W[d], H> - 2*mu <W[d].T, W_source @ K.T>
+        
+             where, K = (w[1].T w_source[1] * ... * w[d-1].T w_source[d-1] * w[d+1].T w_source[
+             d+1] * ... * w[D].T w_source[D])
+        """
+        loadings = tl.ones(self.max_rank)
+        # Initialize parameters
+        H, G = _init_model_params(x, w, self._features)
+
+        # Initialize K
+        K = tl.ones((self.max_rank, self.max_rank))
+        for d in range(D):
+            K *= w[d].T @ w_source[d]
+
+        # ALS Sweeps
+        itemax = int(tl.min([self.num_sweeps * D, self.max_iter]))
+        for it in range(itemax):
+            d = it % D
+            z_x = self._features(x[:, d])
+
+            # remove d-th component of the terms
+            H /= w[d].T @ w[d]
+            G /= z_x @ w[d]
+            K /= w[d].T @ w_source[d]
+
+            # Solve least-square system
+            GG, Gy = get_system_cp_krr(z_x, G, y, batch_size=self.batch_size)
+            A = GG + (self.reg_par+ self.mu) * N * tl.kron(H.T, tl.eye(self.M))
+            b = Gy + self.mu * N * tl.reshape((w_source[d]*loadings_source) @ K.T, (-1,), order='F') # check reshape
+            # order
+            w_d = tl.solve(A, b)
+            w[d] = tl.reshape(w_d, (self.M, self.max_rank), order='F')
+
+            # Normalize
+            # if d == D-1 or it == itemax-1:
+            # (loadings, w) = tl.cp_tensor.cp_normalize((tl.ones(self.max_rank), w))
+            loadings = tl.norm(w[d], order=2, axis=0)
+            w[d] /= loadings
+
+            # Update terms
+            H *= w[d].T @ w[d]
+            G *= z_x @ w[d]
+            K *= w[d].T @ w_source[d]
+
+        w[d] = w[d] * (loadings)
+        self.weights_ = w
+        return self
+
+
+
+
+
+
+
+
+
+
 
