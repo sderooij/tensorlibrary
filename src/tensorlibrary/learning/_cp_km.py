@@ -52,7 +52,7 @@ def _init_model_params_step(d, x, w, feature_fun, reg, G):
     G *= z_x @ w[d]
     return reg, G
 
-def _init_model_params(x, w, feature_fun):
+def _init_model_params(x, w, feature_fun, *, balanced=False, y=None):
     """
     Initialize model al_parameters for CP Kernel Machines. This function initializes the mapped features and the
     regularizer and the G matrix which is the product of the mapped features and the weights and is used in the
@@ -66,16 +66,36 @@ def _init_model_params(x, w, feature_fun):
     Returns:
         Tuple: z_x, reg, G
     """
-
-    _, D = x.shape
+    N, D = x.shape
     M, R = w[0].shape
-    reg = tl.ones((R, R))
-    G = tl.ones((x.shape[0], R))
+    if balanced:
+        idx_p = tl.where(y == 1)[0]
+        idx_n = tl.where(y == -1)[0]
+        Np = tl.sum(y == 1)
+        Nn = tl.sum(y == -1)
+        Cp = N / (2 * Np)
+        Cn = N / (2 * Nn)
 
-    for d in range(D-1, -1, -1):
-        (reg, G) = _init_model_params_step(d, x, w, feature_fun, reg, G)
+        reg = tl.ones((R, R))
+        Gn = tl.ones((Nn, R))
+        Gp = tl.ones((Np, R))
+        for d in range(D - 1, -1, -1):  # D-1:-1:0
+            w_d = w[d]
+            reg *= w_d.T @ w_d
+            z_x_n = feature_fun(x[idx_n, d])
+            z_x_p = feature_fun(x[idx_p, d])
+            Gn *= (z_x_n @ w_d)
+            Gp *= (z_x_p @ w_d)
 
-    return (reg, G)
+        return reg, Gn, Gp, Cn, Cp, idx_n, idx_p
+    else:
+        reg = tl.ones((R, R))
+        G = tl.ones((x.shape[0], R))
+
+        for d in range(D-1, -1, -1):
+            (reg, G) = _init_model_params_step(d, x, w, feature_fun, reg, G)
+
+        return (reg, G)
 
 
 

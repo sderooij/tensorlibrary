@@ -501,7 +501,7 @@ class CPKRR_Adapt(CPKRR):
             train_loss_flag=False,
             loss='l2',
             penalty='l2',
-            random_init=False,
+            random_init=True,
             debug=False,
             source_model=None,
             batch_size=8192,
@@ -527,7 +527,7 @@ class CPKRR_Adapt(CPKRR):
         )
         self._features = None
         self.source_model = source_model
-        if self.w_init == 'random' or self.w_init is None:
+        if self.w_init == 'random':
             self.random_init = True
         elif self.w_init == 'source':
             self.random_init = False
@@ -569,14 +569,21 @@ class CPKRR_Adapt(CPKRR):
         self.w_init = deepcopy(w)
 
         """
-        min_w ||y-<G, w[d]>||_F^2 + (reg_par + mu)<W[d]^T W[d], H> - 2*mu <W[d].T, W_source @ K.T>
+        min_w[d] ||y-<G, w[d]>||_F^2 + (reg_par + mu)<W[d]^T W[d], H> - 2*mu <W[d].T, W_source @ K.T>
         
              where, K = (w[1].T w_source[1] * ... * w[d-1].T w_source[d-1] * w[d+1].T w_source[
              d+1] * ... * w[D].T w_source[D])
         """
         loadings = tl.ones(self.max_rank)
         # Initialize parameters
-        H, G = _init_model_params(x, w, self._features)
+        if self.class_weight is None or self.class_weight == 'none':
+            H, G = _init_model_params(x, w, self._features)
+            balanced = False
+        elif self.class_weight == 'balanced':
+            balanced = True
+            H, Gn, Gp, c_n, c_p, idx_n, idx_p = _init_model_params(x, w, self._features, balanced=True, y=y)
+        else:
+            raise ValueError("class_weight must be 'none' or 'balanced'")
 
         # Initialize K
         K = tl.ones((self.max_rank, self.max_rank))
@@ -586,32 +593,52 @@ class CPKRR_Adapt(CPKRR):
         # ALS Sweeps
         itemax = int(tl.min([self.num_sweeps * D, self.max_iter]))
         for it in range(itemax):
+            # "core" to update
             d = it % D
+
+            # calculate mapped features
             z_x = self._features(x[:, d])
 
             # remove d-th component of the terms
             H /= w[d].T @ w[d]
-            G /= z_x @ w[d]
             K /= w[d].T @ w_source[d]
 
-            # Solve least-square system
-            GG, Gy = get_system_cp_krr(z_x, G, y, batch_size=self.batch_size)
+            if balanced:
+                z_x_n = self._features(x[idx_n, d])
+                z_x_p = self._features(x[idx_p, d])
+                Gn /= z_x_n @ w[d]
+                Gp /= z_x_p @ w[d]
+            else:
+                z_x = self._features(x[:, d])
+                G /= z_x @ w[d]  # remove current factor
+
+            # get system of equations
+            if balanced:
+                GGn, Gyn = get_system_cp_krr(z_x_n, Gn, y[idx_n], batch_size=self.batch_size)
+                GGp, Gyp = get_system_cp_krr(z_x_p, Gp, y[idx_p], batch_size=self.batch_size)
+                GG = c_n * GGn + c_p * GGp
+                Gy = c_n * Gyn + c_p * Gyp
+            else:
+                GG, Gy = get_system_cp_krr(z_x, G, y, batch_size=self.batch_size)
+
+            # Solve system and assign to w[d]
             A = GG + (self.reg_par+ self.mu) * N * tl.kron(H.T, tl.eye(self.M))
-            b = Gy + self.mu * N * tl.reshape((w_source[d]*loadings_source) @ K.T, (-1,), order='F') # check reshape
-            # order
+            b = Gy + self.mu * N * tl.reshape((w_source[d]*loadings_source) @ K.T, (-1,), order='F')
             w_d = tl.solve(A, b)
             w[d] = tl.reshape(w_d, (self.M, self.max_rank), order='F')
 
             # Normalize
-            # if d == D-1 or it == itemax-1:
-            # (loadings, w) = tl.cp_tensor.cp_normalize((tl.ones(self.max_rank), w))
             loadings = tl.norm(w[d], order=2, axis=0)
             w[d] /= loadings
 
             # Update terms
             H *= w[d].T @ w[d]
-            G *= z_x @ w[d]
             K *= w[d].T @ w_source[d]
+            if balanced:
+                Gn *= z_x_n @ w[d]
+                Gp *= z_x_p @ w[d]
+            else:
+                G *= z_x @ w[d]
 
         w[d] = w[d] * (loadings)
         self.weights_ = w
