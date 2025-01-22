@@ -61,7 +61,7 @@ class BaseTKRR(BaseEstimator, metaclass=ABCMeta):
         debug=False,
     ):
         self.M = M
-        self.w_init = deepcopy(w_init)
+        self.w_init = w_init
         self.feature_map = feature_map
         self.reg_par = reg_par
         self.num_sweeps = num_sweeps
@@ -329,7 +329,7 @@ class CPKRR(ClassifierMixin, BaseTKRR):
         if self.random_init:
             w = init_CP(None, self.M, D, self.max_rank, random_state=rnd)
         else:
-            w = init_CP(self.w_init, self.M, D, self.max_rank, random_state=rnd)
+            w = init_CP(deepcopy(self.w_init), self.M, D, self.max_rank, random_state=rnd)
 
         # if isinstance(self.w_init, list):
         #     for d in range(D):
@@ -527,11 +527,6 @@ class CPKRR_Adapt(CPKRR):
         )
         self._features = None
         self.source_model = source_model
-        if self.w_init == 'random':
-            self.random_init = True
-        elif self.w_init == 'source':
-            self.random_init = False
-
         self.batch_size = batch_size
 
     def fit(self, x: tl.tensor, y: tl.tensor, **kwargs):
@@ -556,6 +551,10 @@ class CPKRR_Adapt(CPKRR):
         rnd = check_random_state(self.random_state)
 
         # Initialize reference weights
+        if self.w_init == 'random':
+            self.random_init = True
+        elif self.w_init == 'source':
+            self.random_init = False
         w_source = deepcopy(self.source_model.weights_)
         loadings_source, w_source = tl.cp_tensor.cp_normalize(
             (tl.ones(self.max_rank), w_source)
