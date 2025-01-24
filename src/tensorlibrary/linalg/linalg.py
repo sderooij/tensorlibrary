@@ -130,7 +130,7 @@ def dot_kron_numba(a, b):
     return np.reshape(temp, (a.shape[0], -1))
 
 
-def dot_r1(a,b):
+def dot_r1(a, b):
     """
     Dot product of two rank-1 tensors. (kronecker products)
     Args:
@@ -148,7 +148,7 @@ def dot_r1(a,b):
 
 
 @njit()
-def dot_r1_numba(a,b):
+def dot_r1_numba(a, b):
     """
     Dot product of two rank-1 tensors. (kronecker products)
     Args:
@@ -180,7 +180,9 @@ def cp_dot(tensor1, tensor2, *, engine: Optional[Text] = "numpy"):
 
     d = len(factors1)
     assert d == len(factors2), "Both tensors must have the same number of modes"
-    assert all(factors1[i].shape[0] == factors2[i].shape[0] for i in range(d)), "Dimension mismatch between tensors"
+    assert all(
+        factors1[i].shape[0] == factors2[i].shape[0] for i in range(d)
+    ), "Dimension mismatch between tensors"
 
     if engine == "numba":
         r1 = factors1[0].shape[1]
@@ -194,6 +196,7 @@ def cp_dot(tensor1, tensor2, *, engine: Optional[Text] = "numpy"):
             result *= factors1[i].T @ factors2[i]
 
         return tl.sum(result)
+
 
 @njit()
 def _cp_dot_numba(factors1, factors2, d, r1, r2):
@@ -215,6 +218,24 @@ def cp_dist(w1, w2):
     """
     distance = cp_dot(w1, w1) - 2 * cp_dot(w1, w2) + cp_dot(w2, w2)
     return np.sqrt(distance)
+
+
+def cp_squared_dist(w1, w2, *, engine="numpy", method="fro"):
+    """
+    ||w1 - w2||_F
+    Args:
+        w1: cp tensor 1
+        w2: cp tensor 2
+
+    Returns:
+        float: Frobenius norm of the difference between the two cp tensors
+    """
+    distance = (
+        cp_dot(w1, w1, engine=engine)
+        - 2 * cp_dot(w1, w2, engine=engine)
+        + cp_dot(w2, w2, engine=engine)
+    )
+    return distance
 
 
 def cp_cos_sim(w1, w2):
@@ -250,4 +271,36 @@ def cp_norm(w):
     return np.sqrt(cp_dot(w, w))
 
 
+def cp_add(tensor1, tensor2):
+    """
+    Add two CP tensors.
+    Args:
+        w1: cp tensor 1
+        w2: cp tensor 2
 
+    Returns:
+        cp tensor: sum of the two cp tensors
+    """
+    if isinstance(tensor1, tl.cp_tensor.CPTensor):
+        factors1 = tensor1.factors.copy()
+        factors1[0] = factors1[0] * tensor1.weights
+    elif isinstance(tensor1, list):
+        factors1 = tensor1.copy()
+
+    if isinstance(tensor2, tl.cp_tensor.CPTensor):
+        if isinstance(tensor2, tl.cp_tensor.CPTensor):
+            factors2 = tensor2.factors.copy()
+            factors2[0] = factors2[0] * tensor2.weights
+        elif isinstance(tensor2, list):
+            factors2 = tensor2.copy()
+
+    d = len(factors1)
+    assert d == len(factors2), "Both tensors must have the same number of modes"
+    new_factors = []
+    for i in range(d):
+        assert (
+            factors1[i].shape[0] == factors2[i].shape[0]
+        ), "Dimension mismatch between tensors"
+        new_factors.append(tl.concatenate([factors1[i], factors2[i]], axis=1))
+
+    return new_factors

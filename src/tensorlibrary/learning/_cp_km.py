@@ -30,6 +30,7 @@ def init_CP(w_init, M, D, R, *, random_state=None):
 
     return w
 
+
 def _init_model_params_step(d, x, w, feature_fun, reg, G):
     """
     Initialization step for  model al_parameters for CP Kernel Machines. This function initializes the mapped features and
@@ -51,6 +52,7 @@ def _init_model_params_step(d, x, w, feature_fun, reg, G):
     reg *= w[d].T @ w[d]
     G *= z_x @ w[d]
     return reg, G
+
 
 def _init_model_params(x, w, feature_fun, *, balanced=False, y=None):
     """
@@ -84,20 +86,18 @@ def _init_model_params(x, w, feature_fun, *, balanced=False, y=None):
             reg *= w_d.T @ w_d
             z_x_n = feature_fun(x[idx_n, d])
             z_x_p = feature_fun(x[idx_p, d])
-            Gn *= (z_x_n @ w_d)
-            Gp *= (z_x_p @ w_d)
+            Gn *= z_x_n @ w_d
+            Gp *= z_x_p @ w_d
 
         return reg, Gn, Gp, Cn, Cp, idx_n, idx_p
     else:
         reg = tl.ones((R, R))
         G = tl.ones((x.shape[0], R))
 
-        for d in range(D-1, -1, -1):
+        for d in range(D - 1, -1, -1):
             (reg, G) = _init_model_params_step(d, x, w, feature_fun, reg, G)
 
         return (reg, G)
-
-
 
 
 # def _solve_CPKM_step(A, b, reg_mat, solver,  loss):
@@ -109,7 +109,9 @@ def _init_model_params(x, w, feature_fun, *, balanced=False, y=None):
 #     return w_d
 
 
-def _fit_CP_KM_step(it, x, y, reg_par, solver, feature_fun, penalty, compute_objective, model_parameters):
+def _fit_CP_KM_step(
+    it, x, y, reg_par, solver, feature_fun, penalty, compute_objective, model_parameters
+):
 
     w, reg, G, loadings = model_parameters
     M, R = w[0].shape
@@ -122,16 +124,14 @@ def _fit_CP_KM_step(it, x, y, reg_par, solver, feature_fun, penalty, compute_obj
     G /= z_x @ w[d]  # remove current factor
 
     A, b = compute_objective(z_x, G, y)
-    if penalty == 'l2':
+    if penalty == "l2":
         reg_mat = reg + reg_par * tl.kron(reg, tl.eye(M))
     else:
         raise NotImplementedError
 
     w_d = solver(A, b, reg_mat)
 
-    w[d] = tl.reshape(
-        w_d, (M, R), order="F"
-    )
+    w[d] = tl.reshape(w_d, (M, R), order="F")
 
     loadings = tl.norm(w[d], order=2, axis=0)
     w[d] /= loadings
@@ -141,7 +141,9 @@ def _fit_CP_KM_step(it, x, y, reg_par, solver, feature_fun, penalty, compute_obj
     return w, reg, G, loadings
 
 
-def _fit_CP_KM_balanced_step(it, x, y, reg_par, solver, feature_fun, penalty, compute_objective, model_parameters):
+def _fit_CP_KM_balanced_step(
+    it, x, y, reg_par, solver, feature_fun, penalty, compute_objective, model_parameters
+):
 
     w, reg, G, loadings = model_parameters
     M, R = w[0].shape
@@ -154,16 +156,14 @@ def _fit_CP_KM_balanced_step(it, x, y, reg_par, solver, feature_fun, penalty, co
     G /= z_x @ w[d]  # remove current factor
 
     A, b = compute_objective(z_x, G, y)
-    if penalty == 'l2':
+    if penalty == "l2":
         reg_mat = reg + reg_par * tl.kron(reg, tl.eye(M))
     else:
         raise NotImplementedError
 
     w_d = solver(A, b, reg_mat)
 
-    w[d] = tl.reshape(
-        w_d, (M, R), order="F"
-    )
+    w[d] = tl.reshape(w_d, (M, R), order="F")
 
     loadings = tl.norm(w[d], order=2, axis=0)
     w[d] /= loadings
@@ -176,7 +176,7 @@ def _fit_CP_KM_balanced_step(it, x, y, reg_par, solver, feature_fun, penalty, co
 def _square_hinge_loss(w, G, y, reg_mat):
 
     margins = 1 - y * (G @ w)
-    hinge_loss =(margins>0)*margins
+    hinge_loss = (margins > 0) * margins
     squared_hinge_loss = tl.dot(hinge_loss, hinge_loss)
     regularization = w.T @ reg_mat @ w
     return squared_hinge_loss + regularization
@@ -185,7 +185,7 @@ def _square_hinge_loss(w, G, y, reg_mat):
 def _square_hinge_grad(w, G, y, reg_mat):
 
     margins = 1 - y * (G @ w)
-    hinge_loss = (margins>0)*margins
+    hinge_loss = (margins > 0) * margins
     grad_loss = -2 * G.T @ (y * hinge_loss)
     grad_reg = 2 * reg_mat @ w
     return grad_loss + grad_reg
@@ -195,8 +195,13 @@ def _solve_TSVM_square_hinge(A, b, reg_mat, w_init=None):
     # TODO: implement with slack variables
     if w_init is None:
         w_init = tl.zeros(A.shape[1])
-    w = minimize(_square_hinge_loss, w_init, args=(A, b, reg_mat),
-                    jac=_square_hinge_grad, method='L-BFGS-B').x
+    w = minimize(
+        _square_hinge_loss,
+        w_init,
+        args=(A, b, reg_mat),
+        jac=_square_hinge_grad,
+        method="L-BFGS-B",
+    ).x
     return w
 
 

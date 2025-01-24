@@ -55,8 +55,8 @@ class BaseTKRR(BaseEstimator, metaclass=ABCMeta):
         max_iter=tl.inf,
         Ld=1.0,
         train_loss_flag=False,
-        loss='l2',
-        penalty='l2',
+        loss="l2",
+        penalty="l2",
         random_init=False,
         debug=False,
     ):
@@ -88,14 +88,13 @@ class BaseTKRR(BaseEstimator, metaclass=ABCMeta):
         pass
 
 
-
-
 class TTKRR(BaseTKRR, ClassifierMixin):
     """Tensor Train Kernel Ridge Regression
 
     Args:
         BaseTKRR (BaseTKRR): Abstract Base Class
     """
+
     def __init__(
         self,
         M: int = 5,
@@ -151,13 +150,17 @@ class TTKRR(BaseTKRR, ClassifierMixin):
         elif isinstance(self.w_init, list):
             w = self.w_init
             ranks = [w[i].shape[0] for i in range(len(w))] + [1]
-            assert tl.all(tl.tensor([w[i].shape[1] for i in range(len(w))]) == self.M), "w_init does not match M"
+            assert tl.all(
+                tl.tensor([w[i].shape[1] for i in range(len(w))]) == self.M
+            ), "w_init does not match M"
         else:
             raise TypeError("Unsupported w_int type")
 
         # Initialize feature map
-        WZ_left, WZ_right = initialize_wz(w, x, self.M, self.feature_map, self.map_param, 0)
-        sweep = list(range(0, D-1)) + list(range(D-1, 0, -1))
+        WZ_left, WZ_right = initialize_wz(
+            w, x, self.M, self.feature_map, self.map_param, 0
+        )
+        sweep = list(range(0, D - 1)) + list(range(D - 1, 0, -1))
         ltr = True  # left to right _sweep
         for ite in range(self.num_sweeps):
             for d in sweep:
@@ -166,13 +169,16 @@ class TTKRR(BaseTKRR, ClassifierMixin):
                     ltr = False
                 elif d == 0:
                     ltr = True
-                z_d = features(x[:, d], m=self.M, feature_map=self.feature_map, map_param=self.map_param, Ld=self.Ld)
+                z_d = features(
+                    x[:, d],
+                    m=self.M,
+                    feature_map=self.feature_map,
+                    map_param=self.map_param,
+                    Ld=self.Ld,
+                )
                 # construct linear subsystem matrix
 
-                WZ = dot_kron(
-                    WZ_left[d],
-                    dot_kron(z_d, WZ_right[d])
-                )
+                WZ = dot_kron(WZ_left[d], dot_kron(z_d, WZ_right[d]))
                 # %% Solve the sytem
                 # TODO : make solver a variable + implement batch mode
                 # with solve, regularization needed
@@ -191,30 +197,26 @@ class TTKRR(BaseTKRR, ClassifierMixin):
                 # %% orthogonalize
                 if ltr:
                     new_weight = new_weight.reshape(
-                        (tl.prod([self.M, ranks[d]], dtype=int), ranks[d+1]),
-                        order='F'
+                        (tl.prod([self.M, ranks[d]], dtype=int), ranks[d + 1]),
+                        order="F",
                     )
-                    Q, R = tl.qr(new_weight, 'reduced')
+                    Q, R = tl.qr(new_weight, "reduced")
                     # shift norm to next core
-                    w[d] = Q.reshape(
-                        (ranks[d], self.M, ranks[d + 1]),
-                        order='F'
-                    )
-                    w[d+1] = tl.tenalg.mode_dot(w[d+1], R, 0)
+                    w[d] = Q.reshape((ranks[d], self.M, ranks[d + 1]), order="F")
+                    w[d + 1] = tl.tenalg.mode_dot(w[d + 1], R, 0)
                     # update WZ left
-                    WZ_left[d+1] = update_wz_tt(w[d], z_d, WZ_left[d], mode="left")
+                    WZ_left[d + 1] = update_wz_tt(w[d], z_d, WZ_left[d], mode="left")
                 else:
                     new_weight = new_weight.reshape(
                         (ranks[d], tl.prod([self.M, ranks[d + 1]], dtype=int)),
-                        order='F'
+                        order="F",
                     )
-                    Q, R = tl.qr(new_weight.T, 'reduced')
+                    Q, R = tl.qr(new_weight.T, "reduced")
                     # shift norm to next core
-                    w[d] = Q.T.reshape((ranks[d], self.M, ranks[d + 1]), order='F')
-                    w[d-1] = tl.tenalg.mode_dot(w[d-1], R, 2)
+                    w[d] = Q.T.reshape((ranks[d], self.M, ranks[d + 1]), order="F")
+                    w[d - 1] = tl.tenalg.mode_dot(w[d - 1], R, 2)
                     # update WZ right
-                    WZ_right[d-1] = update_wz_tt(w[d], z_d, WZ_right[d], mode="right")
-
+                    WZ_right[d - 1] = update_wz_tt(w[d], z_d, WZ_right[d], mode="right")
 
         self.weights_ = w
         return self
@@ -224,16 +226,30 @@ class TTKRR(BaseTKRR, ClassifierMixin):
         D = x.shape[1]
         y_pred = update_wz_tt(
             self.weights_[0],
-            features(x[:, 0], m=self.M, feature_map=self.feature_map, map_param=self.map_param, Ld=self.Ld),
+            features(
+                x[:, 0],
+                m=self.M,
+                feature_map=self.feature_map,
+                map_param=self.map_param,
+                Ld=self.Ld,
+            ),
             None,
-            mode="first")
+            mode="first",
+        )
         for d in range(1, D):
             y_pred = update_wz_tt(
                 self.weights_[d],
-                features(x[:, d], m=self.M, feature_map=self.feature_map, map_param=self.map_param, Ld=self.Ld),
+                features(
+                    x[:, d],
+                    m=self.M,
+                    feature_map=self.feature_map,
+                    map_param=self.map_param,
+                    Ld=self.Ld,
+                ),
                 y_pred,
-                mode="left")
-        return y_pred[:,0]
+                mode="left",
+            )
+        return y_pred[:, 0]
 
     def predict(self, x: tl.tensor, **kwargs):
         """Predict class labels for samples in x"""
@@ -278,8 +294,8 @@ class CPKRR(ClassifierMixin, BaseTKRR):
         max_iter=tl.inf,
         Ld=1.0,
         train_loss_flag=False,
-        loss='l2',
-        penalty='l2',
+        loss="l2",
+        penalty="l2",
         random_init=False,
         debug=False,
     ):
@@ -308,7 +324,13 @@ class CPKRR(ClassifierMixin, BaseTKRR):
 
     def fit(self, x: tl.tensor, y: tl.tensor, **kwargs):
         self.classes_ = tl.tensor([-1, 1])  # TODO based on y
-        self._features = partial(features, m=self.M, feature_map=self.feature_map, Ld=self.Ld, map_param=self.map_param)
+        self._features = partial(
+            features,
+            m=self.M,
+            feature_map=self.feature_map,
+            Ld=self.Ld,
+            map_param=self.map_param,
+        )
 
         if self.mu != 0 and self.w_init is not None:
             self._extra_reg = True
@@ -329,15 +351,16 @@ class CPKRR(ClassifierMixin, BaseTKRR):
         if self.random_init:
             w = init_CP(None, self.M, D, self.max_rank, random_state=rnd)
         else:
-            w = init_CP(deepcopy(self.w_init), self.M, D, self.max_rank, random_state=rnd)
+            w = init_CP(
+                deepcopy(self.w_init), self.M, D, self.max_rank, random_state=rnd
+            )
 
         # if isinstance(self.w_init, list):
         #     for d in range(D):
         #         self.w_init[d] /= tl.norm(self.w_init[d], order=2, axis=0)
 
-
         # initialize mapped features
-        if self.class_weight is None or self.class_weight == 'none':
+        if self.class_weight is None or self.class_weight == "none":
             reg = 1
             G = 1
             for d in range(D - 1, -1, -1):  # D-1:-1:0
@@ -346,7 +369,7 @@ class CPKRR(ClassifierMixin, BaseTKRR):
                 z_x = self._features(x[:, d])
                 G = (z_x @ w_d) * G
             balanced = False
-        elif self.class_weight == 'balanced':
+        elif self.class_weight == "balanced":
             # count class instances in y
             idx_p = tl.where(y == 1)[0]
             idx_n = tl.where(y == -1)[0]
@@ -369,7 +392,7 @@ class CPKRR(ClassifierMixin, BaseTKRR):
 
         if self._extra_reg:
             extra_reg = tl.ones((self.max_rank, self.max_rank))
-            for d in range(D-1, -1,-1):
+            for d in range(D - 1, -1, -1):
                 extra_reg *= w[d].T @ self.w_init[d]
 
         if self.train_loss_flag:
@@ -394,15 +417,19 @@ class CPKRR(ClassifierMixin, BaseTKRR):
                 Gp /= z_x_p @ w[d]
                 CCn, Cyn = get_system_cp_krr(z_x_n, Gn, y[idx_n])
                 CCp, Cyp = get_system_cp_krr(z_x_p, Gp, y[idx_p])
-                CC = Cn*CCn + Cp*CCp
-                Cy = Cn*Cyn + Cp*Cyp
+                CC = Cn * CCn + Cp * CCp
+                Cy = Cn * Cyn + Cp * Cyp
 
             if self._extra_reg:
                 extra_reg /= w[d].T @ self.w_init[d]
-                Cy += self.mu * N * tl.reshape(self.w_init[d] @ extra_reg.T, (-1,), order='F')
+                Cy += (
+                    self.mu
+                    * N
+                    * tl.reshape(self.w_init[d] @ extra_reg.T, (-1,), order="F")
+                )
             reg_mat = self.reg_par * N * tl.kron(reg, tl.eye(self.M))
 
-            if self.loss == 'l2':
+            if self.loss == "l2":
                 if self.debug:
                     # check that the loss matrix is positive definite
                     if not tl.all(np.linalg.eigvals(CC + reg_mat) > 0):
@@ -410,9 +437,10 @@ class CPKRR(ClassifierMixin, BaseTKRR):
                 w_d = tl.solve(CC + reg_mat, Cy)
 
             del CC, Cy
-            w[d] = tl.reshape(
-                w_d, (self.M, self.max_rank), order="F"
-            )
+            w[d] = tl.reshape(w_d, (self.M, self.max_rank), order="F")
+
+            if self.train_loss_flag:
+                self.train_loss.append(self._loss_fun(x, y, w))
             # weights_ = tl.cp_tensor.cp_normalize(weights_)
             loadings = tl.norm(w[d], order=2, axis=0)
             w[d] /= loadings
@@ -426,8 +454,6 @@ class CPKRR(ClassifierMixin, BaseTKRR):
             if self._extra_reg:
                 extra_reg *= w[d].T @ self.w_init[d]
 
-            if self.train_loss_flag:
-                self.train_loss.append(self._loss_fun(x, y, w))
                 # self.train_loss.append(1-accuracy_score(y, tl.sign(CPKM_predict(x, w, self._features))))
 
         if self.train_loss_flag:
@@ -441,13 +467,19 @@ class CPKRR(ClassifierMixin, BaseTKRR):
         check_is_fitted(self, ["weights_"])
         x = check_array(x)
         if not hasattr(self, "_features"):
-            self._features = partial(features, m=self.M, feature_map=self.feature_map, Ld=self.Ld, map_param=self.map_param)
+            self._features = partial(
+                features,
+                m=self.M,
+                feature_map=self.feature_map,
+                Ld=self.Ld,
+                map_param=self.map_param,
+            )
         # if batch_size is None:
         try:
             return CPKM_predict_batchwise(x, self.weights_, self._features)
         except:
             return CPKM_predict(x, self.weights_, self._features)
-        #TODO: implement batch mode
+        # TODO: implement batch mode
         # else:
         # batch_size = 1024
         # for i in range(0, x.shape[0],1024):
@@ -463,8 +495,9 @@ class CPKRR(ClassifierMixin, BaseTKRR):
         return tl.sign(self.decision_function(x))
 
     def _loss_fun(self, x: tl.tensor, y: tl.tensor, w: tl.tensor):
-        return (tl.norm(y - tl.sign(CPKM_predict(x, w, self._features))) ** 2)/x.shape[0]   # normalized loss
-
+        return (tl.norm(y - CPKM_predict(x, w, self._features)) ** 2) / x.shape[
+            0
+        ]  # normalized loss
 
 
 class CPKRR_Adapt(CPKRR):
@@ -485,26 +518,26 @@ class CPKRR_Adapt(CPKRR):
     }
 
     def __init__(
-            self,
-            M: int = 5,
-            w_init=None,
-            feature_map="rbf",
-            reg_par=1e-5,
-            num_sweeps=15,
-            map_param=0.1,
-            max_rank=5,
-            random_state=None,
-            mu=0,
-            class_weight=None,
-            max_iter=tl.inf,
-            Ld=1.0,
-            train_loss_flag=False,
-            loss='l2',
-            penalty='l2',
-            random_init=True,
-            debug=False,
-            source_model=None,
-            batch_size=8192,
+        self,
+        M: int = 5,
+        w_init=None,
+        feature_map="rbf",
+        reg_par=1e-5,
+        num_sweeps=15,
+        map_param=0.1,
+        max_rank=5,
+        random_state=None,
+        mu=0,
+        class_weight=None,
+        max_iter=tl.inf,
+        Ld=1.0,
+        train_loss_flag=False,
+        loss="l2",
+        penalty="l2",
+        random_init=True,
+        debug=False,
+        source_model=None,
+        batch_size=8192,
     ):
         super().__init__(
             M=M,
@@ -546,14 +579,20 @@ class CPKRR_Adapt(CPKRR):
         assert tl.max(y) == 1, "positive class must be 1"
         self.classes_ = tl.tensor([tl.min(y), tl.max(y)])
 
-        self._features = partial(features, m=self.M, feature_map=self.feature_map, Ld=self.Ld, map_param=self.map_param)
+        self._features = partial(
+            features,
+            m=self.M,
+            feature_map=self.feature_map,
+            Ld=self.Ld,
+            map_param=self.map_param,
+        )
         N, D = x.shape
         rnd = check_random_state(self.random_state)
 
         # Initialize reference weights
-        if self.w_init == 'random':
+        if self.w_init == "random":
             self.random_init = True
-        elif self.w_init == 'source':
+        elif self.w_init == "source":
             self.random_init = False
         w_source = deepcopy(self.source_model.weights_)
         loadings_source, w_source = tl.cp_tensor.cp_normalize(
@@ -575,12 +614,14 @@ class CPKRR_Adapt(CPKRR):
         """
         loadings = tl.ones(self.max_rank)
         # Initialize parameters
-        if self.class_weight is None or self.class_weight == 'none':
+        if self.class_weight is None or self.class_weight == "none":
             H, G = _init_model_params(x, w, self._features)
             balanced = False
-        elif self.class_weight == 'balanced':
+        elif self.class_weight == "balanced":
             balanced = True
-            H, Gn, Gp, c_n, c_p, idx_n, idx_p = _init_model_params(x, w, self._features, balanced=True, y=y)
+            H, Gn, Gp, c_n, c_p, idx_n, idx_p = _init_model_params(
+                x, w, self._features, balanced=True, y=y
+            )
         else:
             raise ValueError("class_weight must be 'none' or 'balanced'")
 
@@ -613,18 +654,24 @@ class CPKRR_Adapt(CPKRR):
 
             # get system of equations
             if balanced:
-                GGn, Gyn = get_system_cp_krr(z_x_n, Gn, y[idx_n], batch_size=self.batch_size)
-                GGp, Gyp = get_system_cp_krr(z_x_p, Gp, y[idx_p], batch_size=self.batch_size)
+                GGn, Gyn = get_system_cp_krr(
+                    z_x_n, Gn, y[idx_n], batch_size=self.batch_size
+                )
+                GGp, Gyp = get_system_cp_krr(
+                    z_x_p, Gp, y[idx_p], batch_size=self.batch_size
+                )
                 GG = c_n * GGn + c_p * GGp
                 Gy = c_n * Gyn + c_p * Gyp
             else:
                 GG, Gy = get_system_cp_krr(z_x, G, y, batch_size=self.batch_size)
 
             # Solve system and assign to w[d]
-            A = GG + (self.reg_par+ self.mu) * N * tl.kron(H.T, tl.eye(self.M))
-            b = Gy + self.mu * N * tl.reshape((w_source[d]*loadings_source) @ K.T, (-1,), order='F')
+            A = GG + (self.reg_par + self.mu) * N * tl.kron(H.T, tl.eye(self.M))
+            b = Gy + self.mu * N * tl.reshape(
+                (w_source[d] * loadings_source) @ K.T, (-1,), order="F"
+            )
             w_d = tl.solve(A, b)
-            w[d] = tl.reshape(w_d, (self.M, self.max_rank), order='F')
+            w[d] = tl.reshape(w_d, (self.M, self.max_rank), order="F")
 
             # Normalize
             loadings = tl.norm(w[d], order=2, axis=0)
@@ -642,14 +689,3 @@ class CPKRR_Adapt(CPKRR):
         w[d] = w[d] * (loadings)
         self.weights_ = w
         return self
-
-
-
-
-
-
-
-
-
-
-

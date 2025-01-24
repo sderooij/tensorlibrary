@@ -106,7 +106,7 @@ tt_krr = TTKRR(
     feature_map="rbf",
     map_param=lengthscale,
     random_state=random_state,
-    max_rank=30
+    max_rank=30,
 )
 tt_krr = tt_krr.fit(X_train, y_train)
 y_pred = tt_krr.predict(X_test)
@@ -121,5 +121,3 @@ clf.fit(X_train, y_train)
 y_pred = clf.predict(X_test)
 acc = np.sum(y_pred == y_test) / len(y_test)
 print("Accuracy SVM: ", acc)
-
-

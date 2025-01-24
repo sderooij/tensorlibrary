@@ -54,8 +54,8 @@ class BaseTSVM(BaseEstimator, metaclass=ABCMeta):
         max_iter=tl.inf,
         Ld=1.0,
         train_loss_flag=False,
-        loss='squared_hinge',
-        penalty='l2'
+        loss="squared_hinge",
+        penalty="l2",
     ):
         self.M = M
         self.w_init = w_init
@@ -69,9 +69,15 @@ class BaseTSVM(BaseEstimator, metaclass=ABCMeta):
         self.max_iter = max_iter
         self.mu = mu
         self.Ld = Ld
-        self.train_loss_flag = train_loss_flag,
+        self.train_loss_flag = (train_loss_flag,)
         self.train_loss = []
-        self._features = partial(features, m=self.M, feature_map=self.feature_map, Ld=self.Ld, map_param=self.map_param)
+        self._features = partial(
+            features,
+            m=self.M,
+            feature_map=self.feature_map,
+            Ld=self.Ld,
+            map_param=self.map_param,
+        )
         self.loss = loss
         self.penalty = penalty
 
@@ -102,22 +108,22 @@ class CPSVM(BaseTSVM, ClassifierMixin):
     }
 
     def __init__(
-            self,
-            M: int = 5,
-            w_init=None,
-            feature_map="rbf",
-            reg_par=1e-5,
-            num_sweeps=15,
-            map_param=0.1,
-            max_rank=5,
-            random_state=None,
-            mu=0,
-            class_weight=None,
-            max_iter=tl.inf,
-            Ld=1.0,
-            train_loss_flag=False,
-            loss='squared_hinge',
-            penalty='l2'
+        self,
+        M: int = 5,
+        w_init=None,
+        feature_map="rbf",
+        reg_par=1e-5,
+        num_sweeps=15,
+        map_param=0.1,
+        max_rank=5,
+        random_state=None,
+        mu=0,
+        class_weight=None,
+        max_iter=tl.inf,
+        Ld=1.0,
+        train_loss_flag=False,
+        loss="squared_hinge",
+        penalty="l2",
     ):
         super().__init__(
             M=M,
@@ -134,7 +140,7 @@ class CPSVM(BaseTSVM, ClassifierMixin):
             Ld=Ld,
             train_loss_flag=train_loss_flag,
             loss=loss,
-            penalty=penalty
+            penalty=penalty,
         )
 
         # self.weights_ = w_init
@@ -156,7 +162,7 @@ class CPSVM(BaseTSVM, ClassifierMixin):
         w = init_CP(self.w_init, self.M, D, self.max_rank, random_state=rnd)
 
         # initialize mapped features
-        if self.class_weight is None or self.class_weight == 'none':
+        if self.class_weight is None or self.class_weight == "none":
             (reg, G) = _init_model_params(x, w, self._features)
 
         if self.train_loss_flag:
@@ -175,9 +181,7 @@ class CPSVM(BaseTSVM, ClassifierMixin):
             CC = dot_kron(z_x, G)
             w_d = _solve_TSVM_square_hinge(CC, y, reg_mat, w[d].ravel())
 
-            w[d] = tl.reshape(
-                w_d, (self.M, self.max_rank), order="F"
-            )
+            w[d] = tl.reshape(w_d, (self.M, self.max_rank), order="F")
             # weights_ = tl.cp_tensor.cp_normalize(weights_)
             loadings = tl.norm(w[d], order=2, axis=0)
             w[d] /= loadings
@@ -185,7 +189,9 @@ class CPSVM(BaseTSVM, ClassifierMixin):
             G *= z_x @ w[d]  # add current factor
 
             if self.train_loss_flag:
-                self.train_loss.append(hinge_loss(y, CPKM_predict(x, w, self._features)))
+                self.train_loss.append(
+                    hinge_loss(y, CPKM_predict(x, w, self._features))
+                )
 
         if self.train_loss_flag:
             self.train_loss = tl.tensor(self.train_loss)
@@ -201,4 +207,3 @@ class CPSVM(BaseTSVM, ClassifierMixin):
     def predict(self, x: tl.tensor, **kwargs):
         # check_is_fitted(self, ["weights_"])
         return tl.sign(self.decision_function(x))
-

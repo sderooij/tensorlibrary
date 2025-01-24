@@ -3,7 +3,7 @@ from ..linalg import dot_kron, dot_kron_numba
 import tensorly as tl
 
 
-def get_system_cp_krr(z_x, g, y, *, numba=True, batch_size = 8192):
+def get_system_cp_krr(z_x, g, y, *, numba=True, batch_size=8192):
     """Get the objective function for CP KRR ALS sweeps
 
     Args:
@@ -34,17 +34,18 @@ def get_system_cp_krr(z_x, g, y, *, numba=True, batch_size = 8192):
 
     return A, b
 
+
 # below is old code
 def init_k(W, V):
 
-    #WV^T
+    # WV^T
     assert len(W) == len(V)
     WV = tl.ones((W[0].shape[1], V[0].shape[1]))
     for d in range(1, len(W)):
         WV *= W[d] @ V[d].T
 
     k = V[0] @ WV.T
-    return k.reshape((-1, 1), order='F') #flatten M x R_w
+    return k.reshape((-1, 1), order="F")  # flatten M x R_w
 
 
 def CPKM_predict(x, w, features):
@@ -66,7 +67,8 @@ def CPKM_predict(x, w, features):
     y_pred = tl.sum(y_pred, axis=1)
     return y_pred
 
-def CPKM_predict_batchwise(x, w, features, batch_size = 8192):
+
+def CPKM_predict_batchwise(x, w, features, batch_size=8192):
     """
     Prediction function for CPD based kernel machines in a batch-wise manner.
     Args:
@@ -85,4 +87,3 @@ def CPKM_predict_batchwise(x, w, features, batch_size = 8192):
         y_pred[i:idx_end] = CPKM_predict(x[i:idx_end, :], w, features)
 
     return y_pred
-

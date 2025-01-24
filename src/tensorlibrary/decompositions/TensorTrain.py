@@ -305,8 +305,8 @@ class TensorTrain:
                 for k in range(self.norm_index, new_index):
                     # left unfolding core
                     A_L = self.cores[k].tensor.reshape(
-                        (ranks[k] * self.shape[k], ranks[k + 1])
-                    , order="F")
+                        (ranks[k] * self.shape[k], ranks[k + 1]), order="F"
+                    )
                     # perform QR decomposition
                     Q, R = tl.qr(A_L, mode="reduced")
                     # calculate new rank
@@ -326,7 +326,9 @@ class TensorTrain:
                 for k in reversed(range(new_index + 1, self.norm_index + 1)):
                     # right unfolding core
                     A_R = tl.reshape(
-                        self.cores[k].tensor, (ranks[k], self.shape[k] * ranks[k + 1]), order="F"
+                        self.cores[k].tensor,
+                        (ranks[k], self.shape[k] * ranks[k + 1]),
+                        order="F",
                     )
                     # QR
                     Q, R = tl.qr(A_R.T, mode="reduced")
@@ -338,7 +340,8 @@ class TensorTrain:
                     ranks[k] = Q.shape[1]
                     # Replace cores
                     self.update_core(
-                        k, Q.T.reshape((ranks[k], self.shape[k], ranks[k + 1]), order="F")
+                        k,
+                        Q.T.reshape((ranks[k], self.shape[k], ranks[k + 1]), order="F"),
                     )
             self.norm_index = new_index
             return self
@@ -348,13 +351,17 @@ class TensorTrain:
             if new_index > self.norm_index:
                 for k in range(self.norm_index, new_index):
                     # left unfolding core
-                    A_L = cores[k].reshape((ranks[k] * self.shape[k], ranks[k + 1]), order="F")
+                    A_L = cores[k].reshape(
+                        (ranks[k] * self.shape[k], ranks[k + 1]), order="F"
+                    )
                     # perform QR decomposition
                     Q, R = tl.qr(A_L, mode="reduced")
                     # calculate new rank
                     ranks[k + 1] = Q.shape[1]
                     # Replace cores
-                    cores[k] = Q.reshape((ranks[k], self.shape[k], ranks[k + 1]), order="F")
+                    cores[k] = Q.reshape(
+                        (ranks[k], self.shape[k], ranks[k + 1]), order="F"
+                    )
                     # 1-mode product
                     cores[k + 1] = tl.tenalg.mode_dot(
                         cores[k + 1], R, 0, transpose=True
@@ -362,7 +369,9 @@ class TensorTrain:
             elif new_index < self.norm_index:
                 for k in reversed(range(new_index, self.norm_index)):
                     # right unfolding core
-                    A_R = tl.reshape(cores[k], (ranks[k], self.shape[k] * ranks[k + 1]), order="F")
+                    A_R = tl.reshape(
+                        cores[k], (ranks[k], self.shape[k] * ranks[k + 1]), order="F"
+                    )
                     # QR
                     Q, R = tl.qr(A_R.T, mode="reduced")
                     # contract core k-1 with R'
@@ -370,7 +379,9 @@ class TensorTrain:
                     # calculate new rank
                     ranks[k] = Q.shape[1]
                     # Replace cores
-                    cores[k] = Q.T.reshape((ranks[k], self.shape[k], ranks[k + 1]), order="F")
+                    cores[k] = Q.T.reshape(
+                        (ranks[k], self.shape[k], ranks[k + 1]), order="F"
+                    )
             return TensorTrain(cores=cores, norm_index=new_index)
 
     def outer(self, tens):

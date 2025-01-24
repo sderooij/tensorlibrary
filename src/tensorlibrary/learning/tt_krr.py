@@ -50,13 +50,7 @@ def tt_krr(x, y, m, ranks, reg_par, num_sweeps, feature_map="rbf", map_param=1.0
 def tt_krr_als(weights, x, y, m, reg_par, num_sweeps, feature_map="rbf", map_param=1.0):
     for ite in range(0, num_sweeps):  # forward and backward _sweep
         weights = tt_krr_sweep(
-            weights,
-            x,
-            y,
-            m,
-            reg_par,
-            feature_map=feature_map,
-            map_param=map_param,
+            weights, x, y, m, reg_par, feature_map=feature_map, map_param=map_param,
         )
 
     return weights
@@ -186,33 +180,37 @@ def initialize_wz(weights, x, M, feature_map, map_param, k_core):
     wz_right = [None for iter in range(0, D)]
     wz_left = [None for iter in range(0, D)]
 
-    if k_core == D-1:
+    if k_core == D - 1:
         wz_right[-1] = tl.ones((N, 1))
         wz_left[0] = tl.ones((N, 1))
         for iter, core in enumerate(weights):
-            z_x = features(x[:, iter+1], M, feature_map=feature_map, map_param=map_param)
+            z_x = features(
+                x[:, iter + 1], M, feature_map=feature_map, map_param=map_param
+            )
             if iter == 0:
-                wz_left[iter+1] = update_wz_tt(core, z_x, mode='first')
-            elif iter == D-1:
+                wz_left[iter + 1] = update_wz_tt(core, z_x, mode="first")
+            elif iter == D - 1:
                 break
             else:
-                wz_left[iter+1] = update_wz_tt(core, z_x, wz_left[iter], mode='left')
+                wz_left[iter + 1] = update_wz_tt(core, z_x, wz_left[iter], mode="left")
 
     elif k_core == 0:
         wz_left[0] = tl.ones((N, 1))
         wz_right[-1] = tl.ones((N, 1))
         # iter = D-1
         for iter, core in enumerate(reversed(weights)):
-            if iter == D-1:
+            if iter == D - 1:
                 break
             ii = -(iter + 2)
-            z_x = features(x[:, ii+1], M, feature_map=feature_map, map_param=map_param)
+            z_x = features(
+                x[:, ii + 1], M, feature_map=feature_map, map_param=map_param
+            )
             if ii == -2:
-                wz_right[ii] = update_wz_tt(core, z_x, mode='last')
+                wz_right[ii] = update_wz_tt(core, z_x, mode="last")
             else:
-                wz_right[ii] = update_wz_tt(core, z_x, wz_right[ii+1], mode='right')
+                wz_right[ii] = update_wz_tt(core, z_x, wz_right[ii + 1], mode="right")
     else:
-        raise ValueError('k_core must be either 0 or D-1 for initialization.')
+        raise ValueError("k_core must be either 0 or D-1 for initialization.")
     return wz_left, wz_right
 
 
@@ -304,9 +302,9 @@ def tt_krr_predict(
 
 def get_tt_rank(shape, max_rank):
     out = [1]
-    for k in range(0, len(shape)-1):
-        left = tl.prod(shape[:k+1], dtype=float)
-        right = tl.prod(shape[k+1 :], dtype=float)
+    for k in range(0, len(shape) - 1):
+        left = tl.prod(shape[: k + 1], dtype=float)
+        right = tl.prod(shape[k + 1 :], dtype=float)
         temp = tl.min([left, right, max_rank])
         out.append(int(temp))
     out.append(1)

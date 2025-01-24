@@ -31,10 +31,10 @@ def tt_random(
     cores[0] = tl.tensor(rnd.random_sample((ranks[0], int(shape[0]), ranks[1])))
     cores[0] = cores[0] / tl.norm(cores[0])
 
-    for k in range(d-1, 0, -1):
-        core1 = tl.tensor(rnd.random_sample((int(ranks[k+1] * shape[k]), ranks[k])))
+    for k in range(d - 1, 0, -1):
+        core1 = tl.tensor(rnd.random_sample((int(ranks[k + 1] * shape[k]), ranks[k])))
         Q = linalg.orth(core1)
-        cores[k] = Q.T.reshape((ranks[k], int(shape[k]), ranks[k+1]))
+        cores[k] = Q.T.reshape((ranks[k], int(shape[k]), ranks[k + 1]))
 
     if cores_only:
         return cores

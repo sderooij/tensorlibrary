@@ -1,13 +1,14 @@
-
 import tensorly as tl
 from tensorly import tenalg
 from tensorlibrary import learning as tl_learn
 from tensorlibrary.linalg import dot_kron
+
 # import tensorlibrary.learning.t_krr as t_krr
 from tensorlibrary.random import tt_random
 
 from sklearn.datasets import load_breast_cancer
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
+
 # get some data
 # data = load_breast_cancer()
 # X = data.data[:2,:]
@@ -45,14 +46,16 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
 from scipy.io import loadmat
 import numpy as np
-tenalg.set_backend('core')
+
+tenalg.set_backend("core")
 from tensorly import plugins
+
 plugins.use_default_einsum()
 
 data = loadmat("../data/tt_init.mat")
 w = data["w"]
-wz_2 = data['WZ_2'][0]
-wz_1 = data['WZ_1'][0]
+wz_2 = data["WZ_2"][0]
+wz_1 = data["WZ_1"][0]
 data = loadmat("../data/breast_cancer.mat")
 X_train = data["X_train"]
 y_train = data["y_train"].ravel()
