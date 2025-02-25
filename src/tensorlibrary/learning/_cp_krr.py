@@ -35,6 +35,38 @@ def get_system_cp_krr(z_x, g, y, *, numba=True, batch_size=8192):
     return A, b
 
 
+def get_system_cp_LMPROJ(z_x, p, gamma, *, numba=True, batch_size=8192):
+    """Get the objective function for CP KRR ALS sweeps
+
+    Args:
+        z_x (tl.tensor): z_x features N x M, source and target concatenated
+        p (tl.tensor): feature multiplied with factors
+        gamma (tl.tensor): (1/Ns) or (-1/Nt) for source and target respectively
+        numba (bool, optional): Use numba for faster computation. Only for numpy backend. Defaults to True.
+        batch_size (int, optional): Batch size for computation. Defaults to 8192.
+
+    Returns:
+        Tuple: (A, b) for Ax = b
+
+    """
+    if numba:
+        dotkron = dot_kron_numba
+    else:
+        dotkron = dot_kron
+
+    N, M = z_x.shape
+    _, R = p.shape
+    PP = tl.zeros((R * M, R * M))
+
+    for i in range(0, N, batch_size):
+        idx_end = min(i + batch_size, N)
+        gamma_z_x = gamma[i:idx_end] * z_x[i:idx_end, :]
+        P = dotkron(gamma_z_x, p[i:idx_end, :])
+        PP += P.T @ P
+
+    return PP
+
+
 # below is old code
 def init_k(W, V):
 

@@ -100,6 +100,30 @@ def _init_model_params(x, w, feature_fun, *, balanced=False, y=None):
         return (reg, G)
 
 
+def _init_model_params_LMPROJ(x, w, feature_fun, x_target,*, balanced=False):
+
+    Ns, Ds = x.shape
+    Nt, Dt = x_target.shape
+    M, R = w[0].shape
+    if balanced:
+        raise NotImplementedError
+    else:
+        reg = tl.ones((R, R))
+        G = tl.ones((Ns, R))
+        P = tl.ones((Ns+Nt, R))
+
+        for d in range(Ds - 1, -1, -1):
+            z_x_s = feature_fun(x[:, d])
+            z_x_t = feature_fun(x_target[:, d])
+            z_x = tl.concatenate([z_x_s, z_x_t], axis=0)
+            reg *= w[d].T @ w[d]
+            G *= z_x_s @ w[d]
+            P *= z_x @ w[d]
+
+        return reg, G, P
+
+
+
 # def _solve_CPKM_step(A, b, reg_mat, solver,  loss):
 #     if loss == 'l2':
 #         w_d = tl.solve(A + reg_mat, b)
