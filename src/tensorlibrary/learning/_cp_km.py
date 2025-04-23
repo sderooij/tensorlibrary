@@ -21,12 +21,6 @@ def init_CP(w_init, M, D, R, *, random_state=None):
         w = w_init
     elif isinstance(w_init, list):
         w = deepcopy(w_init)
-        # truncate if rank w_init is larger than R
-        R_init = w[0].shape[1] # all factors have same rank
-        if R_init > R:
-            for d in range(D):
-                w[d] = w[d][:, :R]
-
         # for d in range(D):
         #     w[d] /= tl.norm(w[d], order=2, axis=0)
     elif isinstance(w_init, tl.cp_tensor.CPTensor):
