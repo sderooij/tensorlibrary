@@ -19,7 +19,7 @@ class TensorTrain:
         self,
         tensor=None,
         cores=None,
-        max_ranks: Optional[int] = np.infty,
+        max_ranks: Optional[int] = np.inf,
         max_trunc_error: Optional[float] = 0.0,
         svd_method="tt_svd",
         relative: Optional[bool] = False,
@@ -396,7 +396,7 @@ class TensorTrain:
 def QTT(
     vec,
     q=None,
-    max_ranks: Optional[int] = np.infty,
+    max_ranks: Optional[int] = np.inf,
     max_trunc_error: Optional[float] = 0.0,
     svd_method="tt_svd",
     relative: Optional[bool] = False,

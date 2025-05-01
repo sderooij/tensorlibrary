@@ -110,15 +110,15 @@ def _init_model_params_LMPROJ(x, w, feature_fun, x_target,*, balanced=False):
     else:
         reg = tl.ones((R, R))
         G = tl.ones((Ns, R))
-        P = tl.ones((Ns+Nt, R))
+        P = tl.ones((Nt, R))
 
         for d in range(Ds - 1, -1, -1):
             z_x_s = feature_fun(x[:, d])
             z_x_t = feature_fun(x_target[:, d])
-            z_x = tl.concatenate([z_x_s, z_x_t], axis=0)
+            # z_x = tl.concatenate([z_x_s, z_x_t], axis=0)
             reg *= w[d].T @ w[d]
             G *= z_x_s @ w[d]
-            P *= z_x @ w[d]
+            P *= z_x_t @ w[d]
 
         return reg, G, P
 

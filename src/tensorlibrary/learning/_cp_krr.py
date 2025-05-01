@@ -35,12 +35,14 @@ def get_system_cp_krr(z_x, g, y, *, numba=True, batch_size=8192):
     return A, b
 
 
-def get_system_cp_LMPROJ(z_x, p, gamma, *, numba=True, batch_size=8192):
+def get_system_cp_LMPROJ(z_x, z_x_target, G, G_target, gamma, *, numba=True, batch_size=8192):
     """Get the objective function for CP KRR ALS sweeps
 
     Args:
-        z_x (tl.tensor): z_x features N x M, source and target concatenated
-        p (tl.tensor): feature multiplied with factors
+        z_x (tl.tensor): z_x features N x M, source
+        z_x_target (tl.tensor): z_x features N x M, target
+        G (tl.tensor): feature multiplied with factors N x R, source
+        G_target (tl.tensor): feature multiplied with factors N x R, target
         gamma (tl.tensor): (1/Ns) or (-1/Nt) for source and target respectively
         numba (bool, optional): Use numba for faster computation. Only for numpy backend. Defaults to True.
         batch_size (int, optional): Batch size for computation. Defaults to 8192.
@@ -54,17 +56,24 @@ def get_system_cp_LMPROJ(z_x, p, gamma, *, numba=True, batch_size=8192):
     else:
         dotkron = dot_kron
 
-    N, M = z_x.shape
-    _, R = p.shape
-    PP = tl.zeros((R * M, R * M))
+    N_source, M = z_x.shape
+    N_target, M = z_x_target.shape
+    _, R = G.shape
+    q_sum = tl.zeros((1, R * M))
+    for i in range(0, N_source, batch_size):
+        idx_end = min(i + batch_size, N_source)
+        gamma_z_x = gamma[0] * z_x[i:idx_end, :]
+        Q = dotkron(gamma_z_x, G[i:idx_end, :])
+        q_sum += tl.sum(Q, axis=0)
 
-    for i in range(0, N, batch_size):
-        idx_end = min(i + batch_size, N)
-        gamma_z_x = gamma[i:idx_end] * z_x[i:idx_end, :]
-        P = dotkron(gamma_z_x, p[i:idx_end, :])
-        PP += P.T @ P
+    for i in range(0, N_target, batch_size):
+        idx_end = min(i + batch_size, N_target)
+        gamma_z_x = gamma[1] * z_x_target[i:idx_end, :]
+        Q = dotkron(gamma_z_x, G_target[i:idx_end, :])
+        q_sum += tl.sum(Q, axis=0)
 
-    return PP
+    QQ = q_sum.T @ q_sum # outer product
+    return QQ
 
 
 # below is old code
