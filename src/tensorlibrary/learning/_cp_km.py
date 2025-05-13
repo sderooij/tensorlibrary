@@ -100,27 +100,36 @@ def _init_model_params(x, w, feature_fun, *, balanced=False, y=None):
         return (reg, G)
 
 
-def _init_model_params_LMPROJ(x, w, feature_fun, x_target,*, balanced=False):
+def _init_model_params_LMPROJ(x, w, feature_fun, x_target,*, balanced=False, y=None):
 
     Ns, Ds = x.shape
     Nt, Dt = x_target.shape
     M, R = w[0].shape
+
+    reg = tl.ones((R, R))
+    G = tl.ones((Ns, R))
+    P = tl.ones((Nt, R))
+
+    for d in range(Ds - 1, -1, -1):
+        z_x_s = feature_fun(x[:, d])
+        z_x_t = feature_fun(x_target[:, d])
+        # z_x = tl.concatenate([z_x_s, z_x_t], axis=0)
+        reg *= w[d].T @ w[d]
+        G *= z_x_s @ w[d]
+        P *= z_x_t @ w[d]
+
     if balanced:
-        raise NotImplementedError
-    else:
-        reg = tl.ones((R, R))
-        G = tl.ones((Ns, R))
-        P = tl.ones((Nt, R))
+        idx_p = tl.where(y == 1)[0]
+        idx_n = tl.where(y == -1)[0]
+        Np = tl.sum(y == 1)
+        Nn = tl.sum(y == -1)
+        Cp = Ns / (2 * Np)
+        Cn = Ns / (2 * Nn)
 
-        for d in range(Ds - 1, -1, -1):
-            z_x_s = feature_fun(x[:, d])
-            z_x_t = feature_fun(x_target[:, d])
-            # z_x = tl.concatenate([z_x_s, z_x_t], axis=0)
-            reg *= w[d].T @ w[d]
-            G *= z_x_s @ w[d]
-            P *= z_x_t @ w[d]
+        return reg, G, P, Cn, Cp, idx_n, idx_p
 
-        return reg, G, P
+
+    return reg, G, P
 
 
 

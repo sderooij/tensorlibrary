@@ -3,7 +3,7 @@ from ..linalg import dot_kron, dot_kron_numba
 import tensorly as tl
 
 
-def get_system_cp_krr(z_x, g, y, *, numba=True, batch_size=8192):
+def get_system_cp_krr(z_x, g, y, *, numba=True, batch_size=8192, sample_weights=None):
     """Get the objective function for CP KRR ALS sweeps
 
     Args:
@@ -26,11 +26,15 @@ def get_system_cp_krr(z_x, g, y, *, numba=True, batch_size=8192):
     _, R = g.shape
     A = tl.zeros((R * M, R * M))
     b = tl.zeros(R * M)
+    if sample_weights is None:
+        sample_weights = tl.ones((N,1))
+
     for i in range(0, N, batch_size):
         idx_end = min(i + batch_size, N)
         temp = dotkron(z_x[i:idx_end, :], g[i:idx_end, :])
-        A += temp.T @ temp
-        b += temp.T @ y[i:idx_end]
+        left_temp = temp * sample_weights[i:idx_end, :]
+        A += left_temp.T @ temp
+        b += left_temp.T @ y[i:idx_end]
 
     return A, b
 

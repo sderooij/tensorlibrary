@@ -116,13 +116,29 @@ def multi_dot_kron(matlist):
 @njit()
 def dot_kron_numba(a, b):
     """
-    Computes the row-wise right kronecker product of two matrices.
+    Computes the right face-splitting product of two matrices.
     Args:
         a: first matrix (N x M)
         b: second matrix (N x P)
 
     Returns:
-        matrix of size N x (M*P)
+        matrix of size N x (P*M)
+    """
+    at = np.reshape(a, (a.shape[0], 1, a.shape[1]))
+    bt = np.reshape(b, (b.shape[0], b.shape[1], 1))
+    temp = at * bt
+    return np.reshape(temp, (a.shape[0], -1))
+
+
+def dot_kron_numpy(a, b):
+    """
+    Computes the right face-splitting product of two matrices.
+    Args:
+        a: first matrix (N x M)
+        b: second matrix (N x P)
+
+    Returns:
+        matrix of size N x (P*M)
     """
     at = np.reshape(a, (a.shape[0], 1, a.shape[1]))
     bt = np.reshape(b, (b.shape[0], b.shape[1], 1))

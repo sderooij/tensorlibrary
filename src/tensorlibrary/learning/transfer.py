@@ -319,9 +319,15 @@ class CPKRR_LMPROJ(CPKRR):
         if self.class_weight is None or self.class_weight == "none":
             H, G, G_target = _init_model_params_LMPROJ(x, w, self._features, x_target)
             balanced = False
+            sample_weights=None
         elif self.class_weight == "balanced":
             balanced = True
-            raise NotImplementedError
+            H, G, G_target, Cn, Cp, idx_n, idx_p = _init_model_params_LMPROJ(
+                x, w, self._features, x_target, balanced=True, y=y
+            )
+            sample_weights = tl.ones((N_s, 1))  # for source
+            sample_weights[idx_n] = Cn
+            sample_weights[idx_p] = Cp
         else:
             raise ValueError("class_weight must be 'none' or 'balanced'")
 
@@ -339,25 +345,17 @@ class CPKRR_LMPROJ(CPKRR):
             z_x_target = self._features(x_target[:, d])
             # remove d-th component of the terms
             H /= w[d].T @ w[d]
-
-            if balanced:
-                raise NotImplementedError
-            else:
-                z_x = self._features(x[:, d])
-                G /= z_x @ w[d]  # remove current factor
-                G_target /= z_x_target @ w[d]
+            G /= z_x @ w[d]  # remove current factor
+            G_target /= z_x_target @ w[d]
 
             # get system of equations
-            if balanced:
-                raise NotImplementedError
-            else:
-                GG, Gy = get_system_cp_krr(z_x, G, y, batch_size=self.batch_size)
-                QQ = get_system_cp_LMPROJ(
-                    z_x, z_x_target, G, G_target, gamma, batch_size=self.batch_size
-                )
+            GG, Gy = get_system_cp_krr(z_x, G, y, batch_size=self.batch_size, sample_weights=sample_weights)
+            QQ = get_system_cp_LMPROJ(
+                z_x, z_x_target, G, G_target, gamma, batch_size=self.batch_size
+            )
 
             # Solve system and assign to w[d]
-            A = GG + self.reg_par * N * tl.kron(H.T, tl.eye(self.M)) + self.mu * N * QQ
+            A = GG + self.reg_par * N_s * tl.kron(H.T, tl.eye(self.M)) + self.mu * N_s * QQ       #TODO: N should be N_s, but this seems to work???
             b = Gy
             w_d = tl.solve(A, b)
             w[d] = tl.reshape(w_d, (self.M, self.max_rank), order="F")
@@ -368,12 +366,8 @@ class CPKRR_LMPROJ(CPKRR):
 
             # Update terms
             H *= w[d].T @ w[d]
-
-            if balanced:
-                raise NotImplementedError
-            else:
-                G *= z_x @ w[d]
-                G_target *= z_x_target @ w[d]
+            G *= z_x @ w[d]
+            G_target *= z_x_target @ w[d]
 
         w[d] = w[d] * (loadings)
         self.weights_ = w
