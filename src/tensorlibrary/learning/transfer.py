@@ -17,6 +17,11 @@ from sklearn.utils.validation import (
     check_array,
     check_X_y,
 )
+from sklearn.svm import SVC
+from sklearn.metrics.pairwise import linear_kernel, rbf_kernel, pairwise_kernels
+import cvxopt
+from cvxopt import matrix, spmatrix, solvers
+
 from numbers import Real
 from sklearn.metrics import accuracy_score, hinge_loss
 
@@ -28,7 +33,6 @@ from .t_krr import CPKRR
 from ._cp_krr import get_system_cp_krr, get_system_cp_LMPROJ
 from ._cp_km import init_CP, _init_model_params, _init_model_params_LMPROJ
 from .features import features
-
 
 
 class CPKRR_Adapt(CPKRR):
@@ -372,3 +376,168 @@ class CPKRR_LMPROJ(CPKRR):
         w[d] = w[d] * (loadings)
         self.weights_ = w
         return self
+
+
+class SVC_LMPROJ(ClassifierMixin, BaseEstimator):
+    def __init__(
+        self,
+        kernel="rbf",
+        C=1.0,
+        mu=1e-5,
+        gamma="scale",
+        reg_par=1e-5,
+        degree=3,
+        coef0=1,
+        tol=1e-3,
+        cache_size=200,
+        class_weight=None,
+        verbose=False,
+        max_iter=-1,
+        random_state=None,
+    ):
+        self.kernel = kernel
+        self.C = C
+        self.gamma = gamma
+        self.degree = degree
+        self.coef0 = coef0
+        self.reg_par = reg_par
+        self.tol = tol
+        self.cache_size = cache_size
+        self.class_weight = class_weight
+        self.verbose = verbose
+        self.max_iter = max_iter
+        self.random_state = random_state
+        self.mu = mu
+
+    def _compute_kernel_mat(self, x, x_target):
+        """
+        Compute Omega and Lambda matrices for the LMPROJ method
+        Args:
+            x: source data \in R^{N_s x D}
+            x_target: target data \in R^{N_t x D}
+
+        Returns:
+            Omega, Lambda, K_s
+        """
+        N_s = x.shape[0]
+        N_t = x_target.shape[0]
+        N = N_s + N_t
+        Z = tl.concatenate([x, x_target], axis=0)
+
+        # Compute the kernel matrix for the source data
+        K_s = rbf_kernel(Z, x, gamma=self.gamma) # N x N_s
+
+        # Compute the kernel matrix for the target data
+        K_t= rbf_kernel(Z, x_target, gamma=self.gamma)
+
+        # Combine the kernel matrices to form Omega
+        Omega = ((1/(N_s**2) * (K_s @ tl.ones((N_s, N_s)) @ K_s.T)
+                 + 1/(N_t**2) * (K_t @ tl.ones((N_t, N_t)) @ K_t.T))
+                 - 1/(N_s*N_t) * (
+                         K_s @ tl.ones((N_s, N_t)) @ K_t.T
+                         + K_t @ tl.ones((N_t, N_s)) @ K_s.T
+                 ))
+
+        # compute Lambda K(Z,Z) from K_s and K_t
+        Lambda = rbf_kernel(Z, Z, gamma=self.gamma)
+        return Omega, Lambda, K_s
+
+    def optimize(self, Omega, Lambda, K_s, y, N_t):
+        """
+        Quadratic optimization algorithm
+        Args:
+            Omega: Omega matrix
+            Lambda: Lambda matrix
+            x: source data \in R^{N_s x D}
+            y: source labels \in R^{N_s x 1}
+
+        Returns:
+            alpha: dual variables
+        """
+        N_s = y.shape[0]
+        N = N_s + N_t
+
+        n_vars = N + 1 + N_s
+
+        # Define the quadratic programming problem
+        P = np.zeros((n_vars, n_vars))
+        P[:N, :N] = self.mu*Omega + Lambda + self.reg_par * np.eye(N)
+        P = matrix(P)
+
+        q = np.zeros((n_vars, 1))
+        q[N+1:] = self.C*np.ones((N_s, 1))
+        q = matrix(q)
+
+        G = np.zeros((2*N_s, n_vars))
+        G[:N_s, :N] = -y[:, np.newaxis] * K_s.T
+        G[:N_s, N] = -y
+        G[:N_s, N+1:] = -np.eye(N_s)
+        G[N_s:, N+1:] = -np.eye(N_s)
+        G = matrix(G)
+
+        h = np.zeros((2*N_s, 1))
+        h[:N_s] = -np.ones((N_s, 1))
+        h = matrix(h)
+
+        solvers.options['show_progress'] = self.verbose
+
+        sol = solvers.qp(P, q, G, h)
+        alpha = np.array(sol["x"][:N]).flatten()
+        b = np.array(sol["x"][N])
+        return alpha, b
+
+
+    def fit(self, x, y, x_target=None):
+        """
+        Fit the model
+        """
+        if x_target is None:
+            Warning("x_target is None, using standard SVC")
+            return super().fit(x, y)
+
+        # check if x and y are valid
+        x, y = check_X_y(x, y)
+        x_target = check_array(x_target)
+        N_s, D = x.shape
+        N_t, Dt = x_target.shape
+
+        # compute kernel matrices
+        Omega, Lambda, K_s = self._compute_kernel_mat(x, x_target)
+        # optimize
+        alpha, b = self.optimize(Omega, Lambda, K_s, y, N_t)
+        # set alpha and b
+        # remove zeros from alpha
+        z = np.concatenate([x, x_target], axis=0)
+        self.support_ = np.where(alpha > 1e-6)[0]
+        self.dual_coef_ = alpha[self.support_]
+        self.intercept_ = b
+        # set support vectors
+        self.support_vectors_ = z[self.support_,:]
+        self.n_features_in_ = D
+
+        return self
+
+    def decision_function(self, x):
+        """
+        Compute the decision function for the given data
+        Args:
+            x: data to predict
+
+        Returns:
+            decision function
+        """
+        check_is_fitted(self)
+        x = check_array(x)
+        K = rbf_kernel(x, self.support_vectors_, gamma=self.gamma)
+        return K @ self.dual_coef_ + self.intercept_
+
+    def predict(self, x):
+        """
+        Predict the labels for the given data
+        Args:
+            x: data to predict
+
+        Returns:
+            predicted labels
+        """
+        return np.sign(self.decision_function(x))
