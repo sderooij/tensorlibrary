@@ -19,8 +19,9 @@ from sklearn.utils.validation import (
 )
 from sklearn.svm import SVC
 from sklearn.metrics.pairwise import linear_kernel, rbf_kernel, pairwise_kernels
-import cvxopt
+# import cvxopt
 from cvxopt import matrix, spmatrix, solvers
+import cvxpy
 
 from numbers import Real
 from sklearn.metrics import accuracy_score, hinge_loss
@@ -29,7 +30,7 @@ from sklearn.metrics import accuracy_score, hinge_loss
 from copy import deepcopy
 
 # local imports
-from .t_krr import CPKRR
+from .t_krr import CPKRR, transform_labels
 from ._cp_krr import get_system_cp_krr, get_system_cp_LMPROJ
 from ._cp_km import init_CP, _init_model_params, _init_model_params_LMPROJ
 from .features import features
@@ -110,6 +111,7 @@ class CPKRR_Adapt(CPKRR):
 
         """
         # set parameters
+        y = transform_labels(y)
         assert tl.min(y) == -1, "negative class must be -1"
         assert tl.max(y) == 1, "positive class must be 1"
         self.classes_ = tl.tensor([tl.min(y), tl.max(y)])
@@ -269,30 +271,15 @@ class CPKRR_LMPROJ(CPKRR):
         )
         self._features = None
         self.batch_size = batch_size
+        self.N_s = None
+        self.N_t = None
+        self.sample_weights = None
 
-    def fit(self, x: tl.tensor, y: tl.tensor, x_target=None):
-        """
 
-        Args:
-            x:
-            y:
-            sample_weight: array of shape (n_samples,) should be 1 for the source and -1 for the negative class
+    def _init_parameters(self, x, y, x_target=None):
 
-        Returns:
-
-        """
-        if x_target is None:
-            Warning("x_target is None, using standard CPKRR")
-            return super().fit(x, y)
-
-        self.classes_ = tl.tensor([-1, 1])
-
-        N_s, D = x.shape
-        N_t, Dt = x_target.shape
-        assert D == Dt, "source and target data must have the same number of features"
-        N = N_s + N_t
         rnd = check_random_state(self.random_state)
-
+        D = x.shape[1]
         # set feature fun
         self._features = partial(
             features,
@@ -322,21 +309,115 @@ class CPKRR_LMPROJ(CPKRR):
         # Initialize parameters
         if self.class_weight is None or self.class_weight == "none":
             H, G, G_target = _init_model_params_LMPROJ(x, w, self._features, x_target)
-            balanced = False
-            sample_weights=None
         elif self.class_weight == "balanced":
-            balanced = True
             H, G, G_target, Cn, Cp, idx_n, idx_p = _init_model_params_LMPROJ(
                 x, w, self._features, x_target, balanced=True, y=y
             )
-            sample_weights = tl.ones((N_s, 1))  # for source
-            sample_weights[idx_n] = Cn
-            sample_weights[idx_p] = Cp
+            self.sample_weights = tl.ones((self.N_s, 1))  # for source
+            self.sample_weights[idx_n] = Cn
+            self.sample_weights[idx_p] = Cp
         else:
             raise ValueError("class_weight must be 'none' or 'balanced'")
 
+        return w, H, G, G_target
+
+
+    def _als_step(self, gamma, z_x, y, z_x_target, H, G, G_target, w, d):
+
+        # get system of equations
+        GG, Gy = get_system_cp_krr(z_x, G, y, batch_size=self.batch_size, sample_weights=self.sample_weights)
+        QQ = get_system_cp_LMPROJ(
+            z_x, z_x_target, G, G_target, gamma, batch_size=self.batch_size
+        )
+
+        # Solve system and assign to w[d]
+        A = GG + self.reg_par * self.N_s * tl.kron(H.T, tl.eye(
+            self.M)) + self.mu * self.N_s * QQ
+        b = Gy
+        w_d = tl.solve(A, b)
+        w[d] = tl.reshape(w_d, (self.M, self.max_rank), order="F")
+
+        # Normalize
+        loadings = tl.norm(w[d], order=2, axis=0)
+        w[d] /= loadings
+        return w, loadings
+
+
+    def fit(self, x: tl.tensor, y: tl.tensor, x_target=None):
+        """
+
+        Args:
+            x:
+            y:
+            sample_weight: array of shape (n_samples,) should be 1 for the source and -1 for the negative class
+
+        Returns:
+
+        """
+        y = transform_labels(y)
+        if x_target is None:
+            Warning("x_target is None, using standard CPKRR")
+            return super().fit(x, y)
+
+        self.N_s, D = x.shape
+        self.N_t, Dt = x_target.shape
+        assert D == Dt, "source and target data must have the same number of features"
+
+        self.classes_ = tl.tensor([-1, 1])
+        D = x.shape[1]
+
+        # set parameters
+        w, H, G, G_target = self._init_parameters(x, y, x_target)
+
+        # N_s, D = x.shape
+        # N_t, Dt = x_target.shape
+        # assert D == Dt, "source and target data must have the same number of features"
+        # N = N_s + N_t
+        # rnd = check_random_state(self.random_state)
+        #
+        # # set feature fun
+        # self._features = partial(
+        #     features,
+        #     m=self.M,
+        #     feature_map=self.feature_map,
+        #     Ld=self.Ld,
+        #     map_param=self.map_param,
+        # )
+        #
+        # # Initialize reference weights
+        # if self.w_init == "random":
+        #     self.random_init = True
+        #
+        # # Initialize weights with random or source model
+        # if self.random_init:
+        #     w = init_CP(None, self.M, D, self.max_rank, random_state=rnd)
+        # else:
+        #     w = deepcopy(self.w_init)
+        #
+        # """
+        # min_w[d] ||y-<G, w[d]>||_F^2 + (reg_par)<W[d]^T W[d], H> + mu ||<gamma*Q, w[d]>||_F^2
+        #
+        #      where, K = (w[1].T w_source[1] * ... * w[d-1].T w_source[d-1] * w[d+1].T w_source[
+        #      d+1] * ... * w[D].T w_source[D])
+        # """
+        # loadings = tl.ones(self.max_rank)
+        # # Initialize parameters
+        # if self.class_weight is None or self.class_weight == "none":
+        #     H, G, G_target = _init_model_params_LMPROJ(x, w, self._features, x_target)
+        #     balanced = False
+        # elif self.class_weight == "balanced":
+        #     balanced = True
+        #     H, G, G_target, Cn, Cp, idx_n, idx_p = _init_model_params_LMPROJ(
+        #         x, w, self._features, x_target, balanced=True, y=y
+        #     )
+        #     self.sample_weights = tl.ones((N_s, 1))  # for source
+        #     self.sample_weights[idx_n] = Cn
+        #     self.sample_weights[idx_p] = Cp
+        # else:
+        #     raise ValueError("class_weight must be 'none' or 'balanced'")
+
         # set gamma
-        gamma = tl.tensor([1/N_s, -(1/N_t)])#tl.concatenate([(1/N_s) * tl.ones((N_s, 1)), -(1/N_t) * tl.ones((N_t, 1))])
+        gamma = tl.tensor([1/self.N_s, -(1/self.N_t)])#tl.concatenate([(1/N_s) * tl.ones((N_s, 1)), -(1/N_t) * tl.ones((N_t, 1))])
 
         # ALS Sweeps
         itemax = int(tl.min([self.num_sweeps * D, self.max_iter]))
@@ -352,26 +433,161 @@ class CPKRR_LMPROJ(CPKRR):
             G /= z_x @ w[d]  # remove current factor
             G_target /= z_x_target @ w[d]
 
-            # get system of equations
-            GG, Gy = get_system_cp_krr(z_x, G, y, batch_size=self.batch_size, sample_weights=sample_weights)
-            QQ = get_system_cp_LMPROJ(
-                z_x, z_x_target, G, G_target, gamma, batch_size=self.batch_size
-            )
-
-            # Solve system and assign to w[d]
-            A = GG + self.reg_par * N_s * tl.kron(H.T, tl.eye(self.M)) + self.mu * N_s * QQ       #TODO: N should be N_s, but this seems to work???
-            b = Gy
-            w_d = tl.solve(A, b)
-            w[d] = tl.reshape(w_d, (self.M, self.max_rank), order="F")
-
-            # Normalize
-            loadings = tl.norm(w[d], order=2, axis=0)
-            w[d] /= loadings
+            w, loadings = self._als_step(gamma, z_x, y, z_x_target, H, G, G_target, w, d)
 
             # Update terms
             H *= w[d].T @ w[d]
             G *= z_x @ w[d]
             G_target *= z_x_target @ w[d]
+
+            # # calculate mapped features
+            # z_x = self._features(x[:, d])
+            # z_x_target = self._features(x_target[:, d])
+            # # remove d-th component of the terms
+            # H /= w[d].T @ w[d]
+            # G /= z_x @ w[d]  # remove current factor
+            # G_target /= z_x_target @ w[d]
+            #
+            # # get system of equations
+            # GG, Gy = get_system_cp_krr(z_x, G, y, batch_size=self.batch_size, sample_weights=self.sample_weights)
+            # QQ = get_system_cp_LMPROJ(
+            #     z_x, z_x_target, G, G_target, gamma, batch_size=self.batch_size
+            # )
+            #
+            # # Solve system and assign to w[d]
+            # A = GG + self.reg_par * self.N_s * tl.kron(H.T, tl.eye(self.M)) + self.mu * self.N_s * QQ       #TODO: N should be N_s, but this seems to work???
+            # b = Gy
+            # w_d = tl.solve(A, b)
+            # w[d] = tl.reshape(w_d, (self.M, self.max_rank), order="F")
+            #
+            # # Normalize
+            # loadings = tl.norm(w[d], order=2, axis=0)
+            # w[d] /= loadings
+            #
+            # # Update terms
+            # H *= w[d].T @ w[d]
+            # G *= z_x @ w[d]
+            # G_target *= z_x_target @ w[d]
+
+        w[d] = w[d] * (loadings)
+        self.weights_ = w
+        return self
+
+
+class CPKRR_WLMPROJ(CPKRR_LMPROJ):
+    """
+    Weighted LMPROJ.
+    """
+    def __init__(
+        self,
+        M: int = 5,
+        w_init=None,
+        feature_map="rbf",
+        reg_par=1e-5,
+        num_sweeps=15,
+        map_param=0.1,
+        max_rank=5,
+        random_state=None,
+        mu=0,
+        class_weight=None,
+        max_iter=tl.inf,
+        Ld=1.0,
+        train_loss_flag=False,
+        loss="l2",
+        penalty="l2",
+        random_init=True,
+        debug=False,
+    ):
+        super().__init__(
+            M=M,
+            w_init=w_init,
+            feature_map=feature_map,
+            reg_par=reg_par,
+            num_sweeps=num_sweeps,
+            map_param=map_param,
+            max_rank=max_rank,
+            random_state=random_state,
+            class_weight=class_weight,
+            max_iter=max_iter,
+            mu=mu,
+            Ld=Ld,
+            train_loss_flag=train_loss_flag,
+            loss=loss,
+            penalty=penalty,
+            random_init=random_init,
+            debug=debug
+        )
+        self.sample_weights_target = None
+
+    def fit(self, x: tl.tensor, y: tl.tensor, x_target=None, *, sample_weights_target=None):
+        """
+        Fit the model
+        Args:
+            x:
+            y:
+            **kwargs:
+
+        Returns:
+
+        """
+        self.N_s, D = x.shape
+        self.N_t, Dt = x_target.shape
+        assert D == Dt, "source and target data must have the same number of features"
+        self.classes_ = tl.tensor([-1, 1])
+        if sample_weights_target is None:
+            if self.w_init is None:
+                super().fit(x, y)
+                self.w_init = deepcopy(self.weights_)
+            else:
+                self.weights_ = deepcopy(self.w_init)
+            y_target = self.predict(x_target)
+            sample_weights_target = tl.ones((self.N_t, 1))
+            sample_weights_target[y_target == 1] = self.N_t / (2 * tl.sum(y_target == 1))
+            sample_weights_target[y_target == -1] = self.N_t / (2 * tl.sum(y_target == -1))
+        else:
+            assert len(sample_weights_target) == self.N_t
+            if self.w_init is None and self.random_init is False:
+                super().fit(x, y)
+                self.w_init = deepcopy(self.weights_)
+
+        self.sample_weights_target = sample_weights_target
+        w, H, G, G_target = self._init_parameters(x, y, x_target)
+
+        # set gamma, to include class weights
+        gamma = tl.ones((self.N_s + self.N_t, 1))
+        gamma[:self.N_s] = (1/self.N_s) * self.sample_weights
+        gamma[self.N_s:] = -(1/self.N_t) * self.sample_weights_target
+
+        # ALS Sweeps
+        itemax = int(tl.min([self.num_sweeps * D, self.max_iter]))
+        for it in range(itemax):
+            # "core" to update
+            d = it % D
+
+            # calculate mapped features
+            z_x = self._features(x[:, d])
+            z_x_target = self._features(x_target[:, d])
+            # remove d-th component of the terms
+            H /= w[d].T @ w[d]
+            G /= z_x @ w[d]  # remove current factor
+            G_target /= z_x_target @ w[d]
+
+            w, loadings = self._als_step(gamma, z_x, y, z_x_target, H, G, G_target, w, d)
+
+            # Update terms
+            H *= w[d].T @ w[d]
+            G *= z_x @ w[d]
+            G_target *= z_x_target @ w[d]
+
+            # # every sweep, update the sample weights of target
+            # if it % 10 == 0:
+            #
+            #     self.weights_ = deepcopy(w)
+            #     self.weights_[d]*=loadings
+            #     y_target = self.predict(x_target)
+            #     self.sample_weights_target[y_target == 1] = self.N_t / (2* tl.sum(y_target == 1))
+            #     self.sample_weights_target[y_target == -1] = self.N_t / (2 * tl.sum(y_target == -1))
+            #     gamma[self.N_s:] = -(1/self.N_t) * self.sample_weights_target
 
         w[d] = w[d] * (loadings)
         self.weights_ = w
@@ -394,6 +610,7 @@ class SVC_LMPROJ(ClassifierMixin, BaseEstimator):
         verbose=False,
         max_iter=-1,
         random_state=None,
+        optimizer="cvxopt",
     ):
         self.kernel = kernel
         self.C = C
@@ -408,6 +625,7 @@ class SVC_LMPROJ(ClassifierMixin, BaseEstimator):
         self.max_iter = max_iter
         self.random_state = random_state
         self.mu = mu
+        self.optimizer = optimizer
 
     def _compute_kernel_mat(self, x, x_target):
         """
@@ -457,7 +675,7 @@ class SVC_LMPROJ(ClassifierMixin, BaseEstimator):
         N_s = y.shape[0]
         N = N_s + N_t
 
-        n_vars = N + 1 + N_s
+        n_vars = N + 1 + N_s    # N variables for alpha, 1 variable for b, N_s slack variables
 
         # Define the quadratic programming problem
         P = np.zeros((n_vars, n_vars))
@@ -465,7 +683,10 @@ class SVC_LMPROJ(ClassifierMixin, BaseEstimator):
         P = matrix(P)
 
         q = np.zeros((n_vars, 1))
-        q[N+1:] = self.C*np.ones((N_s, 1))
+        if self.sample_weights is None:
+            q[N+1:] = self.C * np.ones((N_s, 1))
+        else:
+            q[N+1:] = self.C * self.sample_weights
         q = matrix(q)
 
         G = np.zeros((2*N_s, n_vars))
@@ -487,10 +708,70 @@ class SVC_LMPROJ(ClassifierMixin, BaseEstimator):
         return alpha, b
 
 
-    def fit(self, x, y, x_target=None):
+    def optimize_cvxpy(self, Omega, Lambda, K_s, y, N_t):
+        """
+        Quadratic optimization algorithm using cvxpy
+        Args:
+            Omega: Omega matrix
+            Lambda: Lambda matrix
+            x: source data \in R^{N_s x D}
+            y: source labels \in R^{N_s x 1}
+
+        Returns:
+            alpha: dual variables, b: bias term
+        """
+
+        N_s = y.shape[0]
+        N = N_s + N_t
+        # Omega = Omega.T @ Omega
+        # Omega = 0.5 * (Omega + Omega.T)
+
+        alpha = cvxpy.Variable(N)
+        b = cvxpy.Variable(1)
+        slack = cvxpy.Variable(N_s)
+
+        # Define the objective function
+        Q = self.mu * Omega + 0.5*Lambda + self.reg_par * np.eye(N)
+        # Q = cvxpy.psd_wrap(Q)
+        if self.class_weight == "balanced":
+            objective = cvxpy.Minimize(
+                cvxpy.quad_form(alpha, Q, assume_PSD=True) +
+                self.C * cvxpy.sum(cvxpy.multiply(self.sample_weights, slack))
+            )
+        else:
+            objective = cvxpy.Minimize(
+                cvxpy.quad_form(alpha, Q, assume_PSD=True) +
+                cvxpy.multiply(self.C, cvxpy.sum(slack))
+            )
+
+        # Define the constraint
+        alpha_weights = tl.ones((N, 1))
+        if self.class_weight == "balanced":
+            alpha_weights[:N_s] = self.sample_weights
+            # Cs = self.C * self.sample_weights
+        alpha_weights *= self.C
+
+        constraints = [
+            cvxpy.multiply(y,K_s.T @ alpha + b) >= 1 - slack,
+            slack >= 0,
+            alpha >= 0,
+            alpha <= alpha_weights,
+        ]
+
+        prob = cvxpy.Problem(objective, constraints)
+        prob.solve(solver=cvxpy.OSQP, verbose=self.verbose)
+
+        return alpha.value, b.value
+
+
+    def fit(self, x, y, x_target=None, *, sample_weights=None):
         """
         Fit the model
         """
+        self.classes_ = np.unique(y)
+        y = transform_labels(y)
+        if self.gamma == "scale":
+            self.gamma = 1.0 / (x.shape[1] * np.var(x))
         if x_target is None:
             Warning("x_target is None, using standard SVC")
             return super().fit(x, y)
@@ -501,14 +782,29 @@ class SVC_LMPROJ(ClassifierMixin, BaseEstimator):
         N_s, D = x.shape
         N_t, Dt = x_target.shape
 
+        if self.class_weight == "balanced":
+            Cp = N_s / (2 * tl.sum(y == 1))
+            Cn = N_s / (2 * tl.sum(y == -1))
+            self.sample_weights = tl.ones((N_s, 1))  # for source
+            self.sample_weights[y == 1] = Cp
+            self.sample_weights[y == -1] = Cn
+        else:
+            self.sample_weights = sample_weights
+
+
         # compute kernel matrices
         Omega, Lambda, K_s = self._compute_kernel_mat(x, x_target)
         # optimize
-        alpha, b = self.optimize(Omega, Lambda, K_s, y, N_t)
+        if self.optimizer == "cvxopt":
+            alpha, b = self.optimize(Omega, Lambda, K_s, y, N_t)
+        elif self.optimizer == "cvxpy":
+            alpha, b = self.optimize_cvxpy(Omega, Lambda, K_s, y, N_t)
+        else:
+            raise ValueError("Optimizer must be 'cvxopt' or 'cvxpy'")
         # set alpha and b
         # remove zeros from alpha
         z = np.concatenate([x, x_target], axis=0)
-        self.support_ = np.where(alpha > 1e-6)[0]
+        self.support_ = np.where(alpha > 1e-10)[0]
         self.dual_coef_ = alpha[self.support_]
         self.intercept_ = b
         # set support vectors

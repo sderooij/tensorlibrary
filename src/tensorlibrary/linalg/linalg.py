@@ -146,6 +146,22 @@ def dot_kron_numpy(a, b):
     return np.reshape(temp, (a.shape[0], -1))
 
 
+def khatrao(a, b):
+    """
+    Computes the khatri-rao product of two matrices. Transpose of face-splitting product.
+    Args:
+        a: first matrix (M x N)
+        b: second matrix (P x N)
+    Returns:
+        matrix of size (M x P) x N
+
+    """
+    at = np.reshape(a, (1, a.shape[0], a.shape[1]))
+    bt = np.reshape(b, (b.shape[0], 1, b.shape[1]))
+    temp = at * bt
+    return np.reshape(temp, (-1, a.shape[1]))
+
+
 def dot_r1(a, b):
     """
     Dot product of two rank-1 tensors. (kronecker products)
@@ -236,7 +252,47 @@ def cp_dist(w1, w2):
     return np.sqrt(distance)
 
 
-def cp_squared_dist(w1, w2, *, engine="numpy", method="fro"):
+def cp_dot_batch(tensor1, tensor2, batch_size=128):
+    """
+    Batch version of cp_dot for large rank tensors.
+
+    Args:
+        tensor1: first cp tensor or list of factors
+        tensor2: second cp tensor or list of factors
+        batch_size: size of the batches to use for the dot product, defaults to 128.
+    Returns:
+        float: dot product of the two cp tensors
+    """
+    if isinstance(tensor1, tl.cp_tensor.CPTensor):
+        factors1 = tensor1.factors.copy()
+        factors1[0] = factors1[0] * tensor1.weights
+    elif isinstance(tensor1, list):
+        factors1 = tensor1.copy()
+
+    if isinstance(tensor2, tl.cp_tensor.CPTensor):
+        factors2 = tensor2.factors.copy()
+        factors2[0] = factors2[0] * tensor2.weights
+    elif isinstance(tensor2, list):
+        factors2 = tensor2.copy()
+    d = len(factors1)
+    assert d == len(factors2), "Both tensors must have the same number of modes"
+
+    R1 = factors1[0].shape[1]
+    R2 = factors2[0].shape[1]
+    result = 0
+    for r in range(0, R1, batch_size):
+        idx1_end = min(r + batch_size, R1)
+        batch1 = [factors1[d][:, r:idx1_end].copy() for d in range(len(factors1))]
+        for k in range(0, R2, batch_size):
+            idx2_end = min(k + batch_size, R2)
+            batch2 = [factors2[d][:, k:idx2_end].copy() for d in range(len(factors2))]
+            prod = cp_dot(batch1, batch2)
+            result += prod
+
+    return result
+
+
+def cp_squared_dist(w1, w2, *, engine="numpy", method="fro", batch_size=None):
     """
     ||w1 - w2||_F
     Args:
@@ -246,12 +302,20 @@ def cp_squared_dist(w1, w2, *, engine="numpy", method="fro"):
     Returns:
         float: Frobenius norm of the difference between the two cp tensors
     """
-    distance = (
-        cp_dot(w1, w1, engine=engine)
-        - 2 * cp_dot(w1, w2, engine=engine)
-        + cp_dot(w2, w2, engine=engine)
-    )
-    return distance
+    if batch_size is None:
+        distance = (
+            cp_dot(w1, w1, engine=engine)
+            - 2 * cp_dot(w1, w2, engine=engine)
+            + cp_dot(w2, w2, engine=engine)
+        )
+        return distance
+    else:
+        distance = (
+                cp_dot_batch(w1, w1, batch_size=batch_size)
+                - 2*cp_dot_batch(w1, w2, batch_size=batch_size)
+                + cp_dot_batch(w2, w2, batch_size=batch_size)
+        )
+        return distance
 
 
 def cp_cos_sim(w1, w2):

@@ -36,6 +36,9 @@ def features(
         for i in range(0, m):
             z_x[:, i] = x_d ** (i)
 
+    elif feature_map == "pure_power":
+        z_x = pure_power_features(x_d, m)
+
     # elif feature_map == "chebyshev":
     #     # chebyshev feature map
     #     z_x = tl.zeros((x_d.shape[0], m))
@@ -67,6 +70,37 @@ def fourier_features(x_d, m: int, map_param=1.0, Ld=1.0):
     )
     z_x = (1 / tl.sqrt(Ld)) * tl.sin(tl.pi * tl.tenalg.outer([x_d, w])) * tl.sqrt(s)
     return z_x
+
+
+def pure_power_features(x_d, m):
+    """
+    Pure-Power Polynomial Features
+
+    Parameters:
+    X : numpy.ndarray
+        Input array of shape (n_samples, n_features).
+    M : int
+        Maximum power (degree) of the polynomial features.
+
+    Returns:
+    Mati : numpy.ndarray
+        Array of shape (n_features, n_samples, M) containing unit-norm pure-power features.
+    """
+    # Compute the pure-power features
+    # polynomial feature map
+    z_x = tl.zeros((x_d.shape[0], m))
+    # in vectorized form
+    for i in range(0, m):
+        z_x[:, i] = x_d ** (i)
+
+    # Normalize each sample's features along the last axis to have a unit norm
+    norms = tl.norm(
+        z_x, axis=1
+    )  # Compute norms along the power axis
+    norms = tl.reshape(norms, (-1, 1))  # Reshape norms to match the feature shape
+    Mati = z_x / norms  # Normalize features to unit norm
+
+    return Mati + 0.2
 
 
 def kernel_mat_features(x, y, m=10, feature_map="rbf", *, map_param=1.0, Ld=1.0):
@@ -109,7 +143,8 @@ def MMD(
     *,
     y_source=None,
     y_target=None,
-    engine="numba"
+    engine="numpy",
+    batch_size=128,
 ):
     """
     Compute the Maximum Mean Discrepancy (MMD) between the source and target distributions using the tensor product features.
@@ -129,7 +164,7 @@ def MMD(
 
     if y_source is None:
         return _compute_mmd(
-            x_source, x_target, feature_fun_source, feature_fun_target, engine=engine
+            x_source, x_target, feature_fun_source, feature_fun_target, engine=engine, batch_size=batch_size
         )
     else:
         idx_pos_source = y_source == 1
@@ -142,6 +177,7 @@ def MMD(
             feature_fun_source,
             feature_fun_target,
             engine=engine,
+            batch_size=batch_size,
         )
         mmd_neg = _compute_mmd(
             x_source[idx_neg_source,:],
@@ -149,11 +185,12 @@ def MMD(
             feature_fun_source,
             feature_fun_target,
             engine=engine,
+            batch_size=batch_size,
         )
         return mmd_pos, mmd_neg
 
 
-def _compute_mmd(x_source, x_target, feature_fun_source, feature_fun_target, engine):
+def _compute_mmd(x_source, x_target, feature_fun_source, feature_fun_target, engine, batch_size):
     N_source, D = x_source.shape
     N_target, Dt = x_target.shape
     assert D == Dt, "x_source and x_target must have the same number of features"
@@ -168,7 +205,7 @@ def _compute_mmd(x_source, x_target, feature_fun_source, feature_fun_target, eng
     loadings_target = (1 / N_target) * tl.ones((1, N_target))
     z_source[-1] = z_source[-1] * loadings_source
     z_target[-1] = z_target[-1] * loadings_target
-    mmd = cp_squared_dist(z_source, z_target, engine=engine)
+    mmd = cp_squared_dist(z_source, z_target, batch_size=batch_size, engine=engine)
     return mmd
 
 

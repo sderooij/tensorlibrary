@@ -64,15 +64,22 @@ def get_system_cp_LMPROJ(z_x, z_x_target, G, G_target, gamma, *, numba=True, bat
     N_target, M = z_x_target.shape
     _, R = G.shape
     q_sum = tl.zeros((1, R * M))
+    if len(gamma) == 2:
+        gamma_s = gamma[0] * tl.ones((N_source, 1))
+        gamma_t = gamma[1] * tl.ones((N_target, 1))
+    else:
+        gamma_s = gamma[:N_source]
+        gamma_t = gamma[N_source:]
+
     for i in range(0, N_source, batch_size):
         idx_end = min(i + batch_size, N_source)
-        gamma_z_x = gamma[0] * z_x[i:idx_end, :]
+        gamma_z_x = gamma_s[i:idx_end] * z_x[i:idx_end, :]
         Q = dotkron(gamma_z_x, G[i:idx_end, :])
         q_sum += tl.sum(Q, axis=0)
 
     for i in range(0, N_target, batch_size):
         idx_end = min(i + batch_size, N_target)
-        gamma_z_x = gamma[1] * z_x_target[i:idx_end, :]
+        gamma_z_x = gamma_t[i:idx_end] * z_x_target[i:idx_end, :]
         Q = dotkron(gamma_z_x, G_target[i:idx_end, :])
         q_sum += tl.sum(Q, axis=0)
 

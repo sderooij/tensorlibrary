@@ -322,7 +322,10 @@ class CPKRR(ClassifierMixin, BaseTKRR):
         # self.weights_ = w_init
 
     def fit(self, x: tl.tensor, y: tl.tensor, **kwargs):
-        self.classes_ = tl.tensor([-1, 1])  # TODO based on y
+
+        self.classes_ = np.unique(y)  # TODO based on y
+        assert tl.min(y) == -1, "negative class must be -1"
+        assert tl.max(y) == 1, "positive class must be 1"
         self._features = partial(
             features,
             m=self.M,
@@ -498,7 +501,8 @@ class CPKRR(ClassifierMixin, BaseTKRR):
 
     def predict(self, x: tl.tensor, **kwargs):
         # check_is_fitted(self, ["weights_"])
-        return tl.sign(self.decision_function(x))
+        y = tl.sign(self.decision_function(x))
+        return y
 
     def _loss_fun(self, x: tl.tensor, y: tl.tensor, w: tl.tensor):
         return (tl.norm(y - CPKM_predict(x, w, self._features)) ** 2) / x.shape[
@@ -514,6 +518,23 @@ class CPKRR(ClassifierMixin, BaseTKRR):
         neg_loss = tl.norm(y_neg - CPKM_predict(x_neg, w, self._features)) ** 2
         return  (Cp * pos_loss + Cy * neg_loss) / x.shape[0]
 
+
+def transform_labels(y):
+    """
+    Convert binary labels to -1 and 1.
+
+    Parameters:
+        y (array-like): Binary labels (0/1 or any two distinct values)
+
+    Returns:
+        np.ndarray: Labels converted to -1 and 1
+    """
+    y = np.asarray(y)
+    classes = np.unique(y)
+    if len(classes) != 2:
+        raise ValueError("Input must contain exactly two distinct classes.")
+
+    return np.where(y == classes[0], -1, 1)
 
 # class CPKRR_Adapt(CPKRR):
 #     # TODO: use this in the future for the adapt methods
