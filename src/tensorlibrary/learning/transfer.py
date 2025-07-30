@@ -239,7 +239,7 @@ class CPKRR_LMPROJ(CPKRR):
         map_param=0.1,
         max_rank=5,
         random_state=None,
-        mu=0,
+        mu="scale",
         class_weight=None,
         max_iter=tl.inf,
         Ld=1.0,
@@ -356,12 +356,18 @@ class CPKRR_LMPROJ(CPKRR):
         """
         y = transform_labels(y)
         if x_target is None:
+            if self.mu == "scale":
+                self.mu = 0
             Warning("x_target is None, using standard CPKRR")
             return super().fit(x, y)
+
 
         self.N_s, D = x.shape
         self.N_t, Dt = x_target.shape
         assert D == Dt, "source and target data must have the same number of features"
+
+        if self.mu == "scale":
+            self.mu = self.N_s + self.N_t
 
         self.classes_ = tl.tensor([-1, 1])
         D = x.shape[1]
