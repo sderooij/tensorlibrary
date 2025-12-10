@@ -112,7 +112,8 @@ def CPKM_predict(x, w, features):
         (N,1) array with outputs
     """
     N, D = x.shape
-    y_pred = tl.ones((N, 1))
+    R = w[0].shape[1]
+    y_pred = tl.ones((N, R))
     for d in range(0, D):
         z_x = features(x[:, d])
         y_pred = y_pred * (z_x @ w[d])

@@ -18,5 +18,7 @@ dependencies = [
     "tensornetwork>=0.4.6",
     "numba",
     "tensorly",
-    "primefac"
+    "primefac",
+    "cvxpy",
+    "cvxopt"
 ]

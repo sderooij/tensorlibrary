@@ -154,10 +154,9 @@ def khatrao(a, b):
         b: second matrix (P x N)
     Returns:
         matrix of size (M x P) x N
-
     """
-    at = np.reshape(a, (1, a.shape[0], a.shape[1]))
-    bt = np.reshape(b, (b.shape[0], 1, b.shape[1]))
+    at = np.reshape(a, (a.shape[0], 1, a.shape[1]))
+    bt = np.reshape(b, (1, b.shape[0], b.shape[1]))
     temp = at * bt
     return np.reshape(temp, (-1, a.shape[1]))
 

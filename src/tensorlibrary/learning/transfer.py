@@ -616,7 +616,7 @@ class SVC_LMPROJ(ClassifierMixin, BaseEstimator):
         verbose=False,
         max_iter=-1,
         random_state=None,
-        optimizer="cvxopt",
+        optimizer="cvxpy",
     ):
         self.kernel = kernel
         self.C = C
@@ -677,6 +677,8 @@ class SVC_LMPROJ(ClassifierMixin, BaseEstimator):
 
         Returns:
             alpha: dual variables
+
+        TODO: fix or remove, only cvxpy is works now
         """
         N_s = y.shape[0]
         N = N_s + N_t
@@ -726,20 +728,21 @@ class SVC_LMPROJ(ClassifierMixin, BaseEstimator):
         Returns:
             alpha: dual variables, b: bias term
         """
-
+        import scipy.sparse as sp
         N_s = y.shape[0]
         N = N_s + N_t
         # Omega = Omega.T @ Omega
         # Omega = 0.5 * (Omega + Omega.T)
 
-        alpha = cvxpy.Variable(N)
-        b = cvxpy.Variable(1)
-        slack = cvxpy.Variable(N_s)
+        alpha = cvxpy.Variable((N,))
+        b = cvxpy.Variable()
+        slack = cvxpy.Variable((N_s,))
 
         # Define the objective function
         Q = self.mu * Omega + 0.5*Lambda + self.reg_par * np.eye(N)
+        # Q = sp.csr_matrix(Q)
         # Q = cvxpy.psd_wrap(Q)
-        if self.class_weight == "balanced":
+        if self.class_weight == "balanced":     # TODO: fix
             objective = cvxpy.Minimize(
                 cvxpy.quad_form(alpha, Q, assume_PSD=True) +
                 self.C * cvxpy.sum(cvxpy.multiply(self.sample_weights, slack))
@@ -756,9 +759,12 @@ class SVC_LMPROJ(ClassifierMixin, BaseEstimator):
             alpha_weights[:N_s] = self.sample_weights
             # Cs = self.C * self.sample_weights
         alpha_weights *= self.C
-
+        alpha_weights = alpha_weights.reshape(-1)
+        expr = K_s.T @ alpha + b *np.ones(N_s)
+        # Y = np.diag(y)
+        # Y = sp.diags(y)
         constraints = [
-            cvxpy.multiply(y,K_s.T @ alpha + b) >= 1 - slack,
+            cvxpy.multiply(y, expr) + slack >= np.ones(N_s),
             slack >= 0,
             alpha >= 0,
             alpha <= alpha_weights,
@@ -797,6 +803,8 @@ class SVC_LMPROJ(ClassifierMixin, BaseEstimator):
         else:
             self.sample_weights = sample_weights
 
+        if self.mu == "scale":
+            self.mu = (N_s + N_t)
 
         # compute kernel matrices
         Omega, Lambda, K_s = self._compute_kernel_mat(x, x_target)
@@ -810,7 +818,7 @@ class SVC_LMPROJ(ClassifierMixin, BaseEstimator):
         # set alpha and b
         # remove zeros from alpha
         z = np.concatenate([x, x_target], axis=0)
-        self.support_ = np.where(alpha > 1e-10)[0]
+        self.support_ = np.where(alpha > 1e-6)[0]
         self.dual_coef_ = alpha[self.support_]
         self.intercept_ = b
         # set support vectors
